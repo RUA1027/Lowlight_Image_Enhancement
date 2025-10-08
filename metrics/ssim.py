@@ -9,6 +9,8 @@ can share the same evaluation logic when executed in environments like Google Co
 
 from __future__ import annotations
 
+from typing import Dict
+
 import torch
 from torchmetrics import StructuralSimilarityIndexMeasure
 
@@ -84,6 +86,77 @@ def calculate_ssim(
 
     ssim_value = ssim_calculator(img_pred_batched, img_true_batched)
     return float(ssim_value.item())
+
+
+@torch.no_grad()
+def calculate_ssim_per_image(
+    img_true: torch.Tensor,
+    img_pred: torch.Tensor,
+    data_range: float,
+    win_size: int = 7,
+) -> torch.Tensor:
+    """Compute SSIM for each image in a batch and return a 1D tensor of scores."""
+    if img_true.shape != img_pred.shape:
+        raise ValueError(
+            f"Input shapes must match exactly, got {img_true.shape=} and {img_pred.shape=}."
+        )
+    if data_range <= 0:
+        raise ValueError(f"`data_range` must be positive, received {data_range}.")
+    if win_size <= 0 or win_size % 2 == 0:
+        raise ValueError(f"`win_size` must be a positive odd integer, received {win_size}.")
+
+    img_true_batched = _ensure_batch_dim(img_true)
+    img_pred_batched = _ensure_batch_dim(img_pred)
+    device = img_true_batched.device
+    metric = StructuralSimilarityIndexMeasure(data_range=data_range, win_size=win_size).to(device)
+
+    scores = []
+    for idx in range(img_true_batched.shape[0]):
+        score = metric(img_pred_batched[idx : idx + 1], img_true_batched[idx : idx + 1])
+        scores.append(score.detach())
+        metric.reset()
+    return torch.stack(scores, dim=0).flatten()
+
+
+
+class SSIMMetric:
+    """Streaming SSIM aggregator providing dataset-level statistics."""
+
+    def __init__(self, data_range: float, win_size: int = 7) -> None:
+        if data_range <= 0:
+            raise ValueError("`data_range` must be positive.")
+        if win_size <= 0 or win_size % 2 == 0:
+            raise ValueError("`win_size` must be a positive odd integer.")
+        self.data_range = data_range
+        self.win_size = win_size
+        self.reset()
+
+    def reset(self) -> None:
+        self._sum = 0.0
+        self._sumsq = 0.0
+        self._count = 0
+
+    @torch.no_grad()
+    def update(self, img_true: torch.Tensor, img_pred: torch.Tensor) -> None:
+        vals = calculate_ssim_per_image(
+            img_true=img_true,
+            img_pred=img_pred,
+            data_range=self.data_range,
+            win_size=self.win_size,
+        )
+        self._sum += float(vals.sum().item())
+        self._sumsq += float((vals**2).sum().item())
+        self._count += int(vals.numel())
+
+    def compute(self) -> Dict[str, float]:
+        if self._count == 0:
+            mean = float("nan")
+            std = float("nan")
+        else:
+            mean = self._sum / self._count
+            var = max(self._sumsq / self._count - mean * mean, 0.0)
+            std = var**0.5
+        return {"mean": mean, "std": std, "count": float(self._count)}
 
 
 if __name__ == "__main__":
