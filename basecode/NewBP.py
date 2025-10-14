@@ -1,4 +1,4 @@
-# new：fNewBP.py
+# new：NewBP.py
 import os
 import torch
 import torch.nn as nn
@@ -24,15 +24,30 @@ class SOAFunction(torch.autograd.Function):
     def forward(ctx, x, n_channels, offset, am_compress, Psat, gss):
         batch_size, lenX = x.shape
         n_devices = lenX // n_channels
-        inputs_adj = x + offset
+        inputs_adj = x + offset  
+        # 调整后的输入信号=输入信号+固定偏置
+
         input_s = reduce(inputs_adj.reshape(batch_size, n_devices, n_channels),
                          'b d c -> b d', 'sum')
+        # 计算每个设备的总输入功率
+        # input_s 的结果维度是 (batch_size, n_devices)，代表每个批次中每个 SOA 设备所接收到的总输入功率。
+        # input_s 的每个元素表示对应设备的总输入功率，即所有通道输入功率的和。
+
         G = torch.where(input_s <= 0,
                         torch.full_like(input_s, gss),
                         gss / (1 + input_s / Psat))
+        # 当总输入功率 input_s 很小时，增益 G 接近于小信号增益 gss。
+        # 随着 input_s 增大，分母变大，增益 G 随之下降。
+
         y = am_compress * \
             inputs_adj.reshape(batch_size, n_devices,
                                n_channels) * G.unsqueeze(-1)
+        # G.unsqueeze(-1) 将 G 的维度扩展为 (batch_size, n_devices, 1)。
+        # 通过 PyTorch 的广播机制，同一个设备（device）的所有通道都乘以相同的增益值 G
+
+        # 一个设备内任何一个通道的信号变化，都会影响 input_s，从而改变整个设备的增益 G，进而影响该设备内所有其他通道的输出。
+        # am_compress 是一个压缩/缩放因子，用于调整输出的幅度
+
         y = y.reshape(batch_size, -1)
         ctx.save_for_backward(inputs_adj, G, input_s)
         ctx.params = (n_channels, offset, am_compress, Psat, gss)
@@ -49,13 +64,25 @@ class SOAFunction(torch.autograd.Function):
         
         # NewBP算法：考虑串扰的梯度计算
         grad_direct = am_compress * G.unsqueeze(-1) * grad_output
+        # 这部分对应于标准反向传播中的链式法则
+        # 不考虑 G 随输入 inputs_adj 变化的情况（即假设 G 是常数）
+        # grad_direct 计算的就是这个直接的梯度贡献
+
         dG_dinput_s = torch.where(input_s > 0,
                                   -gss / (Psat * (1 + input_s/Psat)**2),
                                   torch.zeros_like(input_s))
+        # 这是串扰梯度的核心部分。它计算了增益 G 相对于总输入功率 input_s 的变化率。
+        # 它的物理意义是：当总输入功率 input_s 变化一点点时，整个设备的增益 G 会变化多少。
+        # 这个值通常是负的，因为功率增加，增益会下降（饱和效应）。
+
         grad_indirect = (reduce(grad_output * am_compress * inputs_adj,
                                 'b d c -> b d', 'sum')
                          * dG_dinput_s).unsqueeze(-1)
+        # 这个 grad_indirect 对于一个设备内的所有通道都是相同的，因为它源于共享的增益 G 的变化
+
         grad_total = (grad_direct + grad_indirect).reshape(batch_size, -1)
+        # 相对于输入 x 的总梯度是直接梯度和间接（串扰）梯度之和
+        
         return grad_total, None, None, None, None, None
 
 class SOALayer(nn.Module):
