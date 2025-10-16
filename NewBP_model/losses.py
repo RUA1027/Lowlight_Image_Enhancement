@@ -144,8 +144,18 @@ class PhysicsConsistencyLoss(nn.Module):
             expo_ratio = expo_ratio.view(-1, 1, 1, 1)
         A_align = A_raw * expo_ratio
         x = self.pad(Bhat_raw)
-        groups = Bhat_raw.shape[1] if self.K.shape[0] > 1 else 1
-        Ahat = F.conv2d(x, self.K, bias=None, stride=1, padding=0, groups=groups)
+        C = Bhat_raw.shape[1]
+        k = self.K
+        # If provided kernel is single shared kernel [1,1,kh,kw], broadcast to [C,1,kh,kw]
+        if k.shape[0] == 1 and C > 1:
+            k = k.expand(C, 1, k.shape[-2], k.shape[-1])
+        # groups must match number of input channels for depthwise application
+        groups = C if k.shape[0] == C else 1
+        # If groups==1, expect k to have in_ch/groups = C. Expand if needed.
+        if groups == 1 and k.shape[1] == 1 and C != 1:
+            # Expand along in_channel dim for standard conv (not depthwise)
+            k = k.expand(k.shape[0], C, k.shape[-2], k.shape[-1])
+        Ahat = F.conv2d(x, k, bias=None, stride=1, padding=0, groups=groups)
         return F.l1_loss(Ahat, A_align)
 
 

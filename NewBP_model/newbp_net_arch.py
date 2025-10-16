@@ -8,7 +8,7 @@ if NAFNET_ROOT not in sys.path:
     sys.path.insert(0, NAFNET_ROOT)
 
 from basicsr.models.archs.NAFNet_arch import NAFNet  # pyright: ignore[reportMissingImports]
-from newbp_layer import NewBPLayer
+from newbp_layer import NewBPLayer, CrosstalkPSF, build_psf_kernels
 
 
 def create_newbp_net(in_channels=3, kernel_type='panchromatic', kernel_spec='P2', nafnet_params=None):
@@ -23,18 +23,27 @@ def create_newbp_net(in_channels=3, kernel_type='panchromatic', kernel_spec='P2'
 
     base_model = NAFNet(**nafnet_config)
 
-    newbp_layer = NewBPLayer(
-        in_channels=in_channels,
-        kernel_type=kernel_type,
-        kernel_spec=kernel_spec
-    )
-
-    original_intro = base_model.intro
-    base_model.intro = nn.Sequential(newbp_layer, original_intro)
+    # IMPORTANT: Do NOT convolve the input A with K in the forward.
+    # We keep NAFNet intact; K is only used in the loss branch (output-side consistency).
+    # NewBPLayer is no longer wired into the network input here to avoid double crosstalk.
 
     print(
-        f"[NewBP-Net] Created with kernel_type='{kernel_type}', kernel_spec='{kernel_spec}', "
-        f"in_channels={in_channels}."
+        f"[NewBP-Net] Created (no input-side K). kernel_type='{kernel_type}', kernel_spec='{kernel_spec}', "
+        f"in_channels={in_channels}. Use CrosstalkPSF in loss only."
     )
 
     return base_model
+
+
+def create_crosstalk_psf(psf_mode: str = 'mono', kernel_spec: str = 'P2'):
+    """
+    Helper to build a fixed PSF module for loss graph only.
+
+    psf_mode: 'mono' -> single 3x3 kernel shared across channels; 'rgb' -> per-channel 3x3 kernels.
+    kernel_spec: 'P2' for mono (panchromatic), 'B2' for rgb.
+    """
+    # map legacy names to new modes
+    if psf_mode not in { 'mono', 'rgb' }:
+        raise ValueError("psf_mode must be 'mono' or 'rgb'")
+    kernels = build_psf_kernels(psf_mode, kernel_spec)
+    return CrosstalkPSF(mode=psf_mode, kernels=kernels)
