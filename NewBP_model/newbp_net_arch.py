@@ -21,6 +21,9 @@ def create_newbp_net(in_channels=3, kernel_type='panchromatic', kernel_spec='P2'
     nafnet_config = dict(nafnet_params)
     nafnet_config.setdefault('img_channel', in_channels)
 
+    # Scenario B invariants:
+    # - Forward identity w.r.t K: A_srgb -> NAFNet -> Bhat_srgb; no conv2d(..., K) on input side.
+    # - Physical consistency is enforced only in the loss path using a fixed PSF (register_buffer).
     base_model = NAFNet(**nafnet_config)
 
     # IMPORTANT: Do NOT convolve the input A with K in the forward.
@@ -28,8 +31,8 @@ def create_newbp_net(in_channels=3, kernel_type='panchromatic', kernel_spec='P2'
     # NewBPLayer is no longer wired into the network input here to avoid double crosstalk.
 
     print(
-        f"[NewBP-Net] Created (no input-side K). kernel_type='{kernel_type}', kernel_spec='{kernel_spec}', "
-        f"in_channels={in_channels}. Use CrosstalkPSF in loss only."
+        f"[NewBP-Net] Created (Scenario B: no input-side K). kernel_type='{kernel_type}', kernel_spec='{kernel_spec}', "
+        f"in_channels={in_channels}. Use CrosstalkPSF only in the loss branch."
     )
 
     return base_model

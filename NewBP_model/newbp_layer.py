@@ -93,19 +93,34 @@ class CrosstalkPSF(nn.Module):
         super().__init__()
         assert mode in {"mono", "rgb"}
         self.mode = mode
-        self.register_buffer("kernel", kernels, persistent=True)
+        # K is a state (buffer), not a parameter. It is saved/moved with the model
+        # but will not be optimized. Ensure energy preservation (sum≈1 per channel).
+        self.register_buffer("kernel", kernels.clone(), persistent=True)
+        with torch.no_grad():
+            k = self.kernel
+            # Normalize per-kernel so that sum of weights ≈ 1
+            s = k.view(k.shape[0], -1).sum(dim=1, keepdim=True).clamp_min(1e-12)
+            self.kernel = (k / s.view(-1, 1, 1, 1))
         self.kernel: torch.Tensor
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward is ONLY used in the loss graph.
+        Invariants (Scenario B):
+        - Forward of backbone remains identity w.r.t. K (no input-side conv).
+        - Here we apply K depthwise with groups=3 on sRGB tensors.
+        - padding=1, stride=1 to keep spatial size.
+        """
         C = x.shape[1]
+        assert C == 3, "CrosstalkPSF expects sRGB inputs (3 channels)."
         k = self.kernel
         if self.mode == "mono":
             assert k.shape == (1, 1, 3, 3), "mono mode expects kernels of shape [1,1,3,3]"
-            k = k.expand(C, 1, 3, 3)  # broadcast to all channels
+            k = k.expand(3, 1, 3, 3)  # broadcast to 3 channels
         else:
-            assert k.shape == (3, 1, 3, 3) and C == 3, "rgb mode requires input with 3 channels"
-        # depthwise conv, padding=1 for 3x3 kernels
-        return F.conv2d(x, k, bias=None, stride=1, padding=1, groups=C)
+            assert k.shape == (3, 1, 3, 3), "rgb mode expects kernels of shape [3,1,3,3]"
+        # depthwise conv across RGB channels (groups=3)
+        return F.conv2d(x, k, bias=None, stride=1, padding=1, groups=3)
 
 
 def build_psf_kernels(mode: str, kernel_spec: str = 'P2') -> torch.Tensor:

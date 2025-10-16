@@ -159,6 +159,34 @@ class PhysicsConsistencyLoss(nn.Module):
         return F.l1_loss(Ahat, A_align)
 
 
+def align_exposure_srgb(a_srgb: torch.Tensor, ratio: torch.Tensor | float) -> torch.Tensor:
+    """Align sRGB short exposure to the long exposure scale via scalar ratio, then clamp to [0,1]."""
+    if not torch.is_tensor(ratio):
+        ratio = torch.tensor(ratio, dtype=a_srgb.dtype, device=a_srgb.device)
+    if ratio.dim() == 0:
+        ratio = ratio.view(1)
+    if ratio.dim() == 1:
+        ratio = ratio.view(-1, 1, 1, 1)
+    return (a_srgb * ratio).clamp(0.0, 1.0)
+
+
+class PhysicalConsistencyLossSRGB(nn.Module):
+    """Output-side physical consistency on sRGB domain using a PSF module.
+
+    L_phys = || PSF(Bhat_srgb) - Align(A_srgb; ratio) ||_1
+    The PSF is a fixed module (register_buffer kernels) and is used ONLY in the loss path.
+    """
+    def __init__(self, psf_module: nn.Module):
+        super().__init__()
+        self.psf = psf_module
+        self.l1 = nn.L1Loss()
+
+    def forward(self, bhat_srgb: torch.Tensor, a_srgb: torch.Tensor, ratio: torch.Tensor | float) -> torch.Tensor:
+        a_align = align_exposure_srgb(a_srgb, ratio)
+        a_hat = self.psf(bhat_srgb)
+        return self.l1(a_hat, a_align)
+
+
 class HybridLossPlus(nn.Module):
     """Pluggable hybrid loss combining pixel, perceptual, color, structure, and physics consistency terms.
 
@@ -179,6 +207,7 @@ class HybridLossPlus(nn.Module):
         use_phys: bool = True,
         use_uncertainty: bool = False,
         physics_kernel: Optional[torch.Tensor] = None,
+        physics_psf_module: Optional[nn.Module] = None,
     ):
         super().__init__()
         self.l1_raw = nn.L1Loss().to(device)
@@ -194,7 +223,9 @@ class HybridLossPlus(nn.Module):
                     p.requires_grad = False
             except Exception:
                 self.lpips = None
+        # RAW-domain physics via kernels OR sRGB-domain physics via PSF module
         self.phys = PhysicsConsistencyLoss(physics_kernel, device=device) if use_phys and physics_kernel is not None else None
+        self.phys_srgb = PhysicalConsistencyLossSRGB(physics_psf_module) if use_phys and physics_psf_module is not None else None
 
         self.use_uncertainty = use_uncertainty
         if use_uncertainty:
@@ -229,6 +260,7 @@ class HybridLossPlus(nn.Module):
         expo_ratio: torch.Tensor,
         Bhat_srgb01: torch.Tensor,
         B_srgb01: torch.Tensor,
+        A_srgb01: Optional[torch.Tensor] = None,
     ):
         logs: Dict[str, torch.Tensor] = {}
         L_total = 0.0
@@ -259,6 +291,10 @@ class HybridLossPlus(nn.Module):
         if self.phys is not None:
             L_ph = self.phys(Bhat_raw, A_raw, expo_ratio)
             Lw, logs['Phys'] = self._weighted('phys', L_ph)
+            L_total += Lw
+        elif self.phys_srgb is not None and A_srgb01 is not None:
+            L_phs = self.phys_srgb(Bhat_srgb01, A_srgb01, expo_ratio)
+            Lw, logs['Phys'] = self._weighted('phys', L_phs)
             L_total += Lw
 
         logs['Total'] = torch.as_tensor(L_total).detach()
