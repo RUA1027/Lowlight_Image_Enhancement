@@ -1,5 +1,6 @@
 import os
 import sys
+import logging
 
 import torch.nn as nn
 
@@ -9,6 +10,9 @@ if NAFNET_ROOT not in sys.path:
 
 from basicsr.models.archs.NAFNet_arch import NAFNet  # pyright: ignore[reportMissingImports]
 from newbp_layer import NewBPLayer, CrosstalkPSF, build_psf_kernels
+
+
+logger = logging.getLogger(__name__)
 
 
 def create_newbp_net(in_channels=3, kernel_type='panchromatic', kernel_spec='P2', nafnet_params=None):
@@ -30,9 +34,12 @@ def create_newbp_net(in_channels=3, kernel_type='panchromatic', kernel_spec='P2'
     # We keep NAFNet intact; K is only used in the loss branch (output-side consistency).
     # NewBPLayer is no longer wired into the network input here to avoid double crosstalk.
 
-    print(
-        f"[NewBP-Net] Created (Scenario B: no input-side K). kernel_type='{kernel_type}', kernel_spec='{kernel_spec}', "
-        f"in_channels={in_channels}. Use CrosstalkPSF only in the loss branch."
+    logger.info(
+        "[NewBP-Net] Created (Scenario B: no input-side K). kernel_type='%s', kernel_spec='%s', in_channels=%s. "
+        "Use CrosstalkPSF only in the loss branch.",
+        kernel_type,
+        kernel_spec,
+        in_channels,
     )
 
     return base_model

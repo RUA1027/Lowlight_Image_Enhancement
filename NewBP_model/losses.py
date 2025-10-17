@@ -130,7 +130,7 @@ class PhysicsConsistencyLoss(nn.Module):
 
     K: [C,1,kh,kw] or [1,1,kh,kw]; expo_ratio scales A to B.
     """
-    def __init__(self, K_kernel: torch.Tensor, device: str = 'cuda'):
+    def __init__(self, K_kernel: torch.Tensor, device: str = 'cuda', clamp_align: bool = True):
         super().__init__()
         if K_kernel is None:
             raise ValueError("K_kernel must be provided for PhysicsConsistencyLoss")
@@ -138,11 +138,14 @@ class PhysicsConsistencyLoss(nn.Module):
         self.K: torch.Tensor
         kh, kw = self.K.shape[-2:]
         self.pad = nn.ReplicationPad2d((kw // 2, kw // 2, kh // 2, kh // 2))
+        self.clamp_align = clamp_align
 
     def forward(self, Bhat_raw: torch.Tensor, A_raw: torch.Tensor, expo_ratio: torch.Tensor) -> torch.Tensor:
         if expo_ratio.dim() == 1:
             expo_ratio = expo_ratio.view(-1, 1, 1, 1)
         A_align = A_raw * expo_ratio
+        if self.clamp_align:
+            A_align = A_align.clamp(0.0, 1.0)
         x = self.pad(Bhat_raw)
         C = Bhat_raw.shape[1]
         k = self.K

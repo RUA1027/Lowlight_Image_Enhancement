@@ -57,11 +57,12 @@ def measure_inference_time(
             torch.cuda.synchronize()
             start_event = torch.cuda.Event(enable_timing=True)
             end_event = torch.cuda.Event(enable_timing=True)
+            current_stream = torch.cuda.current_stream()
 
-            start_event.record()
+            start_event.record(current_stream)
             for _ in range(num_runs):
                 _ = model(input_tensor)
-            end_event.record()
+            end_event.record(current_stream)
 
             torch.cuda.synchronize()
             total_time_ms = start_event.elapsed_time(end_event)

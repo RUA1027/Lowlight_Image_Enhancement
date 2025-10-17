@@ -22,11 +22,12 @@ class NewBPFunction(torch.autograd.Function):
 
 
 class NewBPLayer(nn.Module):
-    def __init__(self, in_channels=3, kernel_type='panchromatic', kernel_spec='P2'):
+    def __init__(self, in_channels=3, kernel_type='panchromatic', kernel_spec='P2', *, deprecated: bool = True):
         super().__init__()
         self.in_channels = in_channels
         self.kernel_type = kernel_type
         self.kernel_spec = kernel_spec
+        self.deprecated = deprecated
 
         if kernel_spec not in {'P2', 'B2'}:
         # P2代指全色核, B2代指分色核
@@ -78,6 +79,8 @@ class NewBPLayer(nn.Module):
         return torch.cat((red_kernel, green_kernel, blue_kernel), dim=0)
 
     def forward(self, x):
+        if self.deprecated:
+            raise RuntimeError("Deprecated: use CrosstalkPSF in loss path (Scenario B).")
         padding = (self.kernel.shape[-1] - 1) // 2
         return NewBPFunction.apply(x, self.kernel, padding, self.in_channels)
 
