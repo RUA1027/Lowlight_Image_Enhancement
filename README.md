@@ -237,7 +237,6 @@ ms_per_image = measure_inference_time(net, x, num_warmup=20, num_runs=100)
 
 ---
 
-> 若你希望，我可以基于本 README 生成一份**模板化报告脚本**（CSV/Markdown 导出 + 指标口径与 FLOPs/时延注脚），并附带**核压力实验**的可复现命令集，直接产出论文风格的表格与曲线。
 
 [1]: https://www.ecva.net/papers/eccv_2022/papers_ECCV/papers/136670017.pdf?utm_source=chatgpt.com "Simple Baselines for Image Restoration"
 [2]: https://github.com/richzhang/PerceptualSimilarity?utm_source=chatgpt.com "richzhang/PerceptualSimilarity: LPIPS metric. pip install lpips"
