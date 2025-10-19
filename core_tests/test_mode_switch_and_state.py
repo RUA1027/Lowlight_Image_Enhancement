@@ -1,14 +1,24 @@
 """
-Checks:
-- Train/eval semantics: dropout stochasticity updates BN stats in train, inference stability in eval.
-- Metric heads (PSNR, SSIM, LPIPS, ΔE2000, channelwise stats) remain invariant across grad contexts, AMP, and backend toggles.
-- Autocast scopes, inference_mode, and backend determinism do not leak state or dtype into subsequent runs.
+Validation focus:
+- Crosstalk PSF kernels live as buffers: they travel with state_dict/to(device) yet never join the optimizer parameter groups.
+- Switching mono <-> rgb PSF modes must not mutate the NAFNet backbone weights; forward shape stays intact.
+- Saving/loading with strict flags, device transfers, and optimizer steps affect only the backbone while PSF buffers remain untouched.
 """
 
 from __future__ import annotations
 
-from contextlib import nullcontext
-from typing import Dict, Tuple
+import os
+import sys
+
+# 将项目根目录和 NAFNet 目录添加到 Python 路径中
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+nafnet_root = os.path.join(project_root, 'NAFNet')
+for path in [project_root, nafnet_root]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+import copy
+from typing import Dict, Iterable
 
 import pytest
 import torch
@@ -16,211 +26,150 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 try:
-    from NewBP_model.losses import DeltaE00Loss, SSIMLoss
+    from NewBP_model.newbp_net_arch import create_crosstalk_psf, create_newbp_net
 except ModuleNotFoundError as exc:  # pragma: no cover
     pytest.skip(f"Skipping mode/state tests due to missing dependency: {exc}", allow_module_level=True)
 
-try:
-    from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity as LPIPSMetric
-except Exception:  # pragma: no cover
-    LPIPSMetric = None
+
+def _make_psf(mode: str, device: torch.device) -> nn.Module:
+    spec = "P2" if mode == "mono" else "B2"
+    return create_crosstalk_psf(psf_mode=mode, kernel_spec=spec).to(device)
 
 
-class ModeNet(nn.Module):
-    def __init__(self) -> None:
+class ScenarioBWrapper(nn.Module):
+    """
+    Minimal Scenario-B style wrapper:
+    - `backbone`: standard NAFNet.
+    - `psf`: CrosstalkPSF used in loss graph only (buffer-based kernels).
+    """
+
+    def __init__(self, mode: str = "mono", device: str | torch.device = "cpu") -> None:
         super().__init__()
-        self.conv = nn.Conv2d(3, 8, kernel_size=3, padding=1, bias=False)
-        self.bn = nn.BatchNorm2d(8)
-        self.drop = nn.Dropout(p=0.5)
-        self.head = nn.Conv2d(8, 3, kernel_size=1)
+        self.backbone = create_newbp_net(in_channels=3)
+        self.psf = _make_psf(mode, torch.device("cpu"))
+        self._mode = mode
+        self.to(device)
+
+    @property
+    def mode(self) -> str:
+        return self._mode
+
+    def set_psf_mode(self, mode: str) -> None:
+        device = next(self.backbone.parameters()).device
+        self.psf = _make_psf(mode, device)
+        self._mode = mode
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = F.relu(self.bn(self.conv(x)))
-        x = self.drop(x)
-        return torch.sigmoid(self.head(x))
+        return self.backbone(x)
 
 
-@pytest.fixture(scope="module", params=["cpu"] + (["cuda"] if torch.cuda.is_available() else []))
-def device(request: pytest.FixtureRequest) -> torch.device:
-    return torch.device(request.param)
-
-
-@pytest.fixture()
-def data(device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
+def _rand_img(batch: int = 2, channels: int = 3, height: int = 32, width: int = 32, *, device: str = "cpu") -> torch.Tensor:
     torch.manual_seed(0)
-    gt = torch.rand(2, 3, 64, 64, device=device)
-    pred = torch.clamp(gt + 0.03 * torch.randn_like(gt), 0.0, 1.0)
-    return gt, pred
+    return torch.rand(batch, channels, height, width, device=device)
 
 
-def _lpips(gt: torch.Tensor, pred: torch.Tensor) -> float:
-    if LPIPSMetric is None:
-        return 0.0
-    metric = LPIPSMetric(net_type="alex", normalize=True)
-    return float(metric(gt, pred).mean().item())
+def _tensor_dict_clone(sd: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    return {k: v.detach().clone() for k, v in sd.items()}
 
 
-def _psnr(gt: torch.Tensor, pred: torch.Tensor) -> float:
-    mse = F.mse_loss(pred, gt)
-    if mse == 0:
-        return float("inf")
-    return float(10 * torch.log10(torch.tensor(1.0, device=gt.device) / mse).item())
+@pytest.mark.parametrize("start_mode,end_mode", [("mono", "rgb"), ("rgb", "mono")])
+def test_mode_switch_keeps_backbone_identical(start_mode: str, end_mode: str) -> None:
+    model = ScenarioBWrapper(mode=start_mode)
+    backbone_before = _tensor_dict_clone(model.backbone.state_dict())
+
+    model.set_psf_mode(end_mode)
+
+    for name, param in model.backbone.state_dict().items():
+        assert torch.allclose(param, backbone_before[name]), f"Backbone parameter changed after PSF switch: {name}"
 
 
-def _metrics(gt: torch.Tensor, pred: torch.Tensor) -> Dict[str, float]:
-    try:
-        de_val = float(DeltaE00Loss()(pred, gt).item())
-    except Exception:
-        de_val = float((pred - gt).abs().mean().item())
-    return {
-        "psnr": _psnr(gt, pred),
-        "ssim": float(SSIMLoss(window_size=11, max_val=1.0)(pred, gt).item()),
-        "lpips": _lpips(gt, pred),
-        "de": de_val,
-    }
+def test_psf_is_buffer_and_in_state_dict() -> None:
+    model = ScenarioBWrapper(mode="mono")
+    assert sum(p.numel() for p in model.psf.parameters()) == 0, "PSF kernels must be buffers, not Parameters."
+
+    state_keys = list(model.state_dict().keys())
+    assert any(key.endswith("psf.kernel") for key in state_keys), "State dict should contain psf.kernel buffer."
 
 
-def _close(val_ref: float, val_test: float, *, rtol: float, atol: float) -> bool:
-    return abs(val_ref - val_test) <= atol + rtol * abs(val_ref)
+def _opt_param_count(params: Iterable[torch.nn.Parameter]) -> int:
+    return sum(p.numel() for p in params)
 
 
-def test_dropout_batchnorm_mode_semantics(device: torch.device) -> None:
-    model = ModeNet().to(device)
-    inputs = torch.rand(2, 3, 32, 32, device=device)
+def test_optimizer_updates_backbone_only() -> None:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = ScenarioBWrapper(mode="rgb", device=device)
 
-    model.train()
-    with torch.no_grad():
-        out_train_1 = model(inputs)
-        out_train_2 = model(inputs)
-    assert not torch.allclose(out_train_1, out_train_2), "Dropout should randomize outputs during training."
+    optimizer = torch.optim.Adam(model.backbone.parameters(), lr=1e-2)
+    backbone_param_count = _opt_param_count(model.backbone.parameters())
+    optimizer_param_count = sum(_opt_param_count(group["params"]) for group in optimizer.param_groups)
+    assert backbone_param_count == optimizer_param_count
 
-    running_mean_before = model.bn.running_mean.clone()
-    model.eval()
-    with torch.no_grad():
-        _ = model(inputs)
-    assert torch.allclose(
-        running_mean_before, model.bn.running_mean
-    ), "BN running stats must remain unchanged in eval mode."
+    inputs = _rand_img(device=device)
+    targets = torch.zeros_like(inputs)
+    output = model(inputs)
+    loss = F.mse_loss(output, targets)
 
-    with torch.no_grad():
-        out_eval_1 = model(inputs)
-        out_eval_2 = model(inputs)
-    assert torch.allclose(out_eval_1, out_eval_2), "Eval mode should produce deterministic outputs."
+    kernel_before = model.psf.kernel.detach().clone()
+    first_name, first_param_before = next(iter(model.backbone.state_dict().items()))
+    first_param_before = first_param_before.detach().clone()
+
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
+
+    first_param_after = model.backbone.state_dict()[first_name]
+    assert not torch.allclose(first_param_after, first_param_before), "Backbone parameters did not update."
+    assert torch.allclose(model.psf.kernel, kernel_before), "PSF kernel should remain unchanged by optimizer steps."
 
 
-@pytest.mark.parametrize("ctx_kind", ["none", "no_grad", "inference"])
-@pytest.mark.parametrize("amp_enabled", [False, True])
-def test_metrics_invariant_to_contexts(
-    device: torch.device,
-    data: Tuple[torch.Tensor, torch.Tensor],
-    ctx_kind: str,
-    amp_enabled: bool,
-) -> None:
-    gt, pred = data
-
-    if device.type == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = False
-        torch.backends.cudnn.benchmark = False
-
-    if ctx_kind == "inference":
-        grad_ctx = torch.inference_mode()
-    elif ctx_kind == "no_grad":
-        grad_ctx = torch.no_grad()
-    else:
-        grad_ctx = nullcontext()
-
-    if amp_enabled:
-        if device.type == "cuda":
-            amp_ctx = torch.cuda.amp.autocast()
-        else:
-            amp_ctx = torch.autocast(device_type="cpu", dtype=torch.bfloat16)
-    else:
-        amp_ctx = nullcontext()
+def test_state_dict_save_load_strictness() -> None:
+    model = ScenarioBWrapper(mode="mono")
+    sd_original = copy.deepcopy(model.state_dict())
 
     with torch.no_grad():
-        baseline = _metrics(gt, pred)
+        model.psf.kernel.add_(0.5)
+    incompatible = model.load_state_dict(sd_original, strict=True)
+    assert incompatible.missing_keys == [] and incompatible.unexpected_keys == []
 
-    with grad_ctx, amp_ctx:
-        test_metrics = _metrics(gt, pred)
+    psf_key = next(key for key in sd_original if key.endswith("psf.kernel"))
+    assert torch.allclose(model.state_dict()[psf_key], sd_original[psf_key])
 
-    for key in baseline:
-        if key == "lpips":
-            assert _close(baseline[key], test_metrics[key], rtol=1e-2, atol=5e-3)
-        else:
-            assert _close(baseline[key], test_metrics[key], rtol=5e-3, atol=5e-3)
-
-
-def test_inference_mode_strictness(device: torch.device, data: Tuple[torch.Tensor, torch.Tensor]) -> None:
-    gt, pred = data
-
-    with torch.no_grad():
-        val_no_grad = _lpips(gt, pred)
-
-    with torch.inference_mode():
-        val_inference = _lpips(gt, pred)
-    assert _close(val_no_grad, val_inference, rtol=1e-6, atol=1e-6)
-
-    if LPIPSMetric is None:
-        pytest.skip("LPIPS dependency unavailable; skipping inference strictness residual test.")
-
-    with torch.inference_mode():
-        total = (gt + pred).sum()
-        requires_grad_tensor = gt.clone().requires_grad_(True)
-        with pytest.raises(RuntimeError):
-            (total + requires_grad_tensor.sum()).backward()
+    sd_extra = copy.deepcopy(sd_original)
+    sd_extra["psf.extra_dummy"] = torch.tensor(0.0)
+    incompatible_relaxed = model.load_state_dict(sd_extra, strict=False)
+    assert incompatible_relaxed.missing_keys == []
+    assert "psf.extra_dummy" in incompatible_relaxed.unexpected_keys
 
 
-def test_autocast_scope_reset(device: torch.device, data: Tuple[torch.Tensor, torch.Tensor]) -> None:
-    if device.type != "cuda":
-        pytest.skip("Autocast leakage test is CUDA-specific.")
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_device_transfer_moves_buffers_and_params() -> None:
+    model = ScenarioBWrapper(mode="rgb", device="cpu")
 
-    gt, pred = data
+    model = model.to("cuda")
+    kernel_device = model.psf.kernel.device
+    backbone_device = next(iter(model.backbone.parameters())).device
+    assert kernel_device.type == "cuda" and backbone_device.type == "cuda"
 
-    with torch.cuda.amp.autocast():
-        _ = _lpips(gt, pred)
-
-    with torch.no_grad():
-        val1 = _lpips(gt, pred)
-        val2 = _lpips(gt, pred)
-    assert _close(val1, val2, rtol=1e-7, atol=1e-7)
-
-
-def test_determinism_with_seeds(device: torch.device) -> None:
-    torch.use_deterministic_algorithms(True)
-    torch.manual_seed(123)
-    if device.type == "cuda":
-        torch.cuda.manual_seed_all(123)
-
-    inputs = torch.rand(1, 3, 32, 32, device=device)
-    model1 = ModeNet().to(device).eval()
-    out1 = model1(inputs)
-
-    torch.manual_seed(123)
-    if device.type == "cuda":
-        torch.cuda.manual_seed_all(123)
-    model2 = ModeNet().to(device).eval()
-    out2 = model2(inputs)
-
-    assert torch.allclose(out1, out2)
+    model = model.to("cpu")
+    assert model.psf.kernel.device.type == "cpu"
+    assert next(iter(model.backbone.parameters())).device.type == "cpu"
 
 
-def test_flops_counter_preserves_state(device: torch.device) -> None:
-    from fvcore.nn import FlopCountAnalysis  # Imported lazily to avoid heavy dependency if unused.
+@pytest.mark.parametrize("mode", ["mono", "rgb"])
+def test_forward_shape_invariant_after_mode_switch(mode: str) -> None:
+    model = ScenarioBWrapper(mode=mode)
+    inputs = _rand_img(batch=1, height=40, width=48)
 
-    model = ModeNet().to(device).eval()
-    sample = torch.rand(1, 3, 32, 32, device=device)
+    outputs = model(inputs)
+    assert outputs.shape == inputs.shape
 
-    running_mean_before = model.bn.running_mean.clone()
-    running_var_before = model.bn.running_var.clone()
-
-    _ = FlopCountAnalysis(model, sample)
-
-    assert torch.allclose(running_mean_before, model.bn.running_mean)
-    assert torch.allclose(running_var_before, model.bn.running_var)
+    switched_mode = "rgb" if mode == "mono" else "mono"
+    model.set_psf_mode(switched_mode)
+    outputs_switched = model(inputs)
+    assert outputs_switched.shape == inputs.shape
 
 
 # Remarks:
-# Dropout and BatchNorm exhibit distinct behaviors between train and eval; the tests ensure this remains intact.
-# torch.inference_mode() enforces stricter autograd semantics than no_grad(), so we confirm equality of outputs plus backend errors.
-# Autocast scopes must be contained; leaving autocast should restore FP32 computations with identical outputs.
-# Determinism settings combined with seed control ensure reproducible outputs on supported operators.
+# - PSF kernels are buffers by design: they appear in state_dict and migrate with .to(device) yet never join parameters().
+# - strict=True load restores exact saved states, while strict=False tolerates structural experimentation.
+# - Optimizers should operate solely on backbone weights; PSF buffers remain fixed guidance for loss computations.

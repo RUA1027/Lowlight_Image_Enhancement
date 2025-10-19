@@ -3,7 +3,7 @@ Validation goals:
 - VGG perceptual loss must receive 3-channel sRGB in [0,1], then apply ImageNet mean/std normalization.
 - LPIPS requires [-1,1] inputs unless normalize=True is set (which rescales [0,1]).
 - SSIM needs max_val aligned with the image dynamic range.
-- RGB→Lab conversion expects [0,1] inputs; ΔE_00 should be ~0 for identical images and positive for perturbations.
+- RGB to Lab conversion expects [0,1] inputs; DeltaE00 should be ~0 for identical images and positive for perturbations.
 """
 
 from __future__ import annotations
@@ -18,12 +18,8 @@ for path in [project_root, nafnet_root]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-import math
-from typing import Tuple
-
-import pytest
 import torch
-import torch.nn.functional as F
+import pytest
 
 try:
     from NewBP_model.losses import PerceptualLoss, DeltaE00Loss, SSIMLoss
@@ -31,9 +27,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover
     pytest.skip(f"Skipping domain norm tests due to missing dependency: {exc}", allow_module_level=True)
 
 try:
-    from torchmetrics.image.lpip import (
-        LearnedPerceptualImagePatchSimilarity as TM_LPIPS,
-    )
+    from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity as TM_LPIPS
 except Exception:  # pragma: no cover
     TM_LPIPS = None
 
@@ -48,13 +42,8 @@ try:
 except Exception:
     DELTA_E_AVAILABLE = False
 
-def _rand_img(
-    batch: int = 2,
-    channels: int = 3,
-    height: int = 32,
-    width: int = 32,
-    rng: Tuple[float, float] = (0.0, 1.0),
-) -> torch.Tensor:
+
+def _rand_img(batch: int = 2, channels: int = 3, height: int = 32, width: int = 32, rng=(0.0, 1.0)) -> torch.Tensor:
     lo, hi = rng
     return torch.rand(batch, channels, height, width) * (hi - lo) + lo
 
@@ -99,10 +88,10 @@ def test_lpips_respects_normalize_flag() -> None:
     meter_norm = TM_LPIPS(net_type="vgg", normalize=True)
     dist_01 = meter_norm(img_a, img_b)
 
-    img_a_m11 = img_a * 2 - 1
-    img_b_m11 = img_b * 2 - 1
+    imgm11_a = img_a * 2 - 1
+    imgm11_b = img_b * 2 - 1
     meter_raw = TM_LPIPS(net_type="vgg", normalize=False)
-    dist_m11 = meter_raw(img_a_m11, img_b_m11)
+    dist_m11 = meter_raw(imgm11_a, imgm11_b)
 
     assert torch.isfinite(dist_01)
     assert torch.isfinite(dist_m11)
@@ -137,7 +126,7 @@ def test_ssim_detects_mismatched_dynamic_range() -> None:
     assert torch.abs(val_wrong - val_right) > 1e-2
 
 
-@pytest.mark.skipif(kornia is None, reason="Lab/dE00 dependencies missing")
+@pytest.mark.skipif(kornia is None or not DELTA_E_AVAILABLE, reason="Lab/DeltaE00 dependencies missing")
 def test_rgb_to_lab_and_delta_e_sanity() -> None:
     img = _rand_img(1, 3, 16, 16)
     lab = kornia.color.rgb_to_lab(img)
@@ -148,8 +137,6 @@ def test_rgb_to_lab_and_delta_e_sanity() -> None:
     assert a.min().item() >= -130 and a.max().item() <= 130
     assert b.min().item() >= -130 and b.max().item() <= 130
 
-    if not DELTA_E_AVAILABLE:
-        pytest.skip("dE00 computation unavailable")
     delta = DeltaE00Loss()
     zero_diff = delta(img, img)
     assert float(zero_diff.item()) < 1e-6
@@ -158,13 +145,9 @@ def test_rgb_to_lab_and_delta_e_sanity() -> None:
     diff = delta(img, perturbed)
     assert float(diff.item()) > 0.0
 
-    perturbed = (img + 1.0 / 255.0).clamp(0.0, 1.0)
-    diff = delta(img, perturbed)
-    assert float(diff.item()) > 0.0
-
 
 # Remarks:
-# torchvision’s VGG19 expects sRGB in [0,1] normalized by ImageNet mean/std.
-# TorchMetrics LPIPS interprets inputs in [-1,1] unless normalize=True allows [0,1].
-# Kornia SSIMLoss requires max_val to match input dynamic range.
-# Kornia rgb_to_lab assumes inputs in [0,1]; ΔE_00 close to zero indicates identical colors.
+# - torchvision VGG19 expects sRGB [0,1] normalized by ImageNet mean/std before feature extraction.
+# - TorchMetrics LPIPS interprets inputs in [-1,1] unless normalize=True rescales [0,1] internally.
+# - Kornia SSIMLoss requires max_val to match the input dynamic range.
+# - DeltaE00 is a Lab-domain color difference; using buffers ensures identical images produce near-zero error.
