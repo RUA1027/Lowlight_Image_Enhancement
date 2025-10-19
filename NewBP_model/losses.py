@@ -115,11 +115,11 @@ class DeltaE00Loss(nn.Module):
 
 class SSIMLoss(nn.Module):
     """DSSIM based on Kornia's SSIMLoss. Inputs in [0,1]."""
-    def __init__(self, window_size: int = 11, max_val: float = 1.0):
+    def __init__(self, window_size: int = 11, max_val: float = 1.0, reduction: str = 'mean'):
         super().__init__()
         if Kloss is None:
             raise ImportError("Install kornia to use SSIMLoss (pip install kornia)")
-        self.loss = Kloss.SSIMLoss(window_size=window_size, max_val=max_val)
+        self.loss = Kloss.SSIMLoss(window_size=window_size, max_val=max_val, reduction=reduction)
 
     def forward(self, gen_srgb01: torch.Tensor, tgt_srgb01: torch.Tensor) -> torch.Tensor:
         return self.loss(gen_srgb01.clamp(0, 1), tgt_srgb01.clamp(0, 1))

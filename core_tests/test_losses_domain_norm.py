@@ -1,0 +1,164 @@
+"""
+Validation goals:
+- VGG perceptual loss must receive 3-channel sRGB in [0,1], then apply ImageNet mean/std normalization.
+- LPIPS requires [-1,1] inputs unless normalize=True is set (which rescales [0,1]).
+- SSIM needs max_val aligned with the image dynamic range.
+- RGB→Lab conversion expects [0,1] inputs; ΔE_00 should be ~0 for identical images and positive for perturbations.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+
+# 将项目根目录和 NAFNet 目录添加到 Python 路径中
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+nafnet_root = os.path.join(project_root, 'NAFNet')
+for path in [project_root, nafnet_root]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+import math
+from typing import Tuple
+
+import numpy as np
+import pytest
+import torch
+import torch.nn.functional as F
+
+from NewBP_model.losses import PerceptualLoss, DeltaE00Loss, SSIMLoss
+
+try:
+    from torchmetrics.image.lpip import (
+        LearnedPerceptualImagePatchSimilarity as TM_LPIPS,
+    )
+except Exception:  # pragma: no cover
+    TM_LPIPS = None
+
+try:
+    import kornia
+except Exception:  # pragma: no cover
+    kornia = None
+
+try:
+    from skimage.color import deltaE_ciede2000
+except Exception:  # pragma: no cover
+    deltaE_ciede2000 = None
+
+
+def _rand_img(
+    batch: int = 2,
+    channels: int = 3,
+    height: int = 32,
+    width: int = 32,
+    rng: Tuple[float, float] = (0.0, 1.0),
+) -> torch.Tensor:
+    lo, hi = rng
+    return torch.rand(batch, channels, height, width) * (hi - lo) + lo
+
+
+IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+
+
+class _PerceptualLossProbe(PerceptualLoss):
+    def normalize_imagenet(self, img: torch.Tensor) -> torch.Tensor:
+        return (img - self.mean) / self.std
+
+
+def test_perceptual_loss_accepts_srgb_in_unit_interval() -> None:
+    model = PerceptualLoss(device="cpu")
+    x = _rand_img()
+    y = _rand_img()
+    out = model(x, y)
+    assert torch.isfinite(out)
+    assert out.ndim == 0
+
+
+def test_perceptual_loss_imagenet_normalization_math() -> None:
+    model = _PerceptualLossProbe(device="cpu")
+    ones = torch.ones(1, 3, 4, 4)
+    norm = model.normalize_imagenet(ones)
+    assert torch.allclose(norm, (ones - IMAGENET_MEAN) / IMAGENET_STD)
+
+
+def test_perceptual_loss_rejects_non_three_channel_inputs() -> None:
+    model = PerceptualLoss(device="cpu")
+    gray = torch.rand(1, 1, 8, 8)
+    with pytest.raises(Exception):
+        _ = model(gray, gray)
+
+
+@pytest.mark.skipif(TM_LPIPS is None, reason="TorchMetrics LPIPS not available")
+def test_lpips_respects_normalize_flag() -> None:
+    img_a = _rand_img()
+    img_b = _rand_img()
+
+    meter_norm = TM_LPIPS(net_type="vgg", normalize=True)
+    dist_01 = meter_norm(img_a, img_b)
+
+    img_a_m11 = img_a * 2 - 1
+    img_b_m11 = img_b * 2 - 1
+    meter_raw = TM_LPIPS(net_type="vgg", normalize=False)
+    dist_m11 = meter_raw(img_a_m11, img_b_m11)
+
+    assert torch.isfinite(dist_01)
+    assert torch.isfinite(dist_m11)
+    assert (dist_01 >= 0).all()
+    assert (dist_m11 >= 0).all()
+
+
+@pytest.mark.skipif(kornia is None, reason="Kornia not available")
+def test_ssim_respects_dynamic_range_parameter() -> None:
+    x01 = _rand_img()
+    y01 = _rand_img()
+    loss = SSIMLoss(window_size=11, max_val=1.0)
+    ssim_unit = loss(x01, y01)
+
+    x255 = x01 * 255.0
+    y255 = y01 * 255.0
+    loss_255 = SSIMLoss(window_size=11, max_val=255.0)
+    ssim_scaled = loss_255(x255, y255)
+
+    assert torch.allclose(ssim_unit, ssim_scaled, atol=1e-4)
+
+
+@pytest.mark.skipif(kornia is None, reason="Kornia not available")
+def test_ssim_detects_mismatched_dynamic_range() -> None:
+    x255 = _rand_img(rng=(0.0, 255.0))
+    y255 = _rand_img(rng=(0.0, 255.0))
+    loss_wrong = SSIMLoss(window_size=11, max_val=1.0)
+    loss_right = SSIMLoss(window_size=11, max_val=255.0)
+    val_wrong = loss_wrong(x255, y255)
+    val_right = loss_right(x255, y255)
+    assert torch.isfinite(val_wrong) and torch.isfinite(val_right)
+    assert torch.abs(val_wrong - val_right) > 1e-2
+
+
+@pytest.mark.skipif(kornia is None or deltaE_ciede2000 is None, reason="Lab/ΔE00 dependencies missing")
+def test_rgb_to_lab_and_delta_e_sanity() -> None:
+    img = _rand_img(1, 3, 16, 16)
+    lab = kornia.color.rgb_to_lab(img)
+    L = lab[:, 0]
+    a = lab[:, 1]
+    b = lab[:, 2]
+    assert L.min().item() >= -1e-3 and L.max().item() <= 100 + 1e-3
+    assert a.min().item() >= -130 and a.max().item() <= 130
+    assert b.min().item() >= -130 and b.max().item() <= 130
+
+    lab_np = lab.squeeze(0).permute(1, 2, 0).cpu().numpy()
+    zero_diff = deltaE_ciede2000(lab_np, lab_np)
+    assert float(zero_diff.mean()) < 1e-6
+
+    perturbed = (img + 1.0 / 255.0).clamp(0.0, 1.0)
+    lab_pert = kornia.color.rgb_to_lab(perturbed)
+    lab_pert_np = lab_pert.squeeze(0).permute(1, 2, 0).cpu().numpy()
+    diff = deltaE_ciede2000(lab_np, lab_pert_np)
+    assert float(diff.mean()) > 0.0
+
+
+# Remarks:
+# torchvision’s VGG19 expects sRGB in [0,1] normalized by ImageNet mean/std.
+# TorchMetrics LPIPS interprets inputs in [-1,1] unless normalize=True allows [0,1].
+# Kornia SSIMLoss requires max_val to match input dynamic range.
+# Kornia rgb_to_lab assumes inputs in [0,1]; ΔE_00 close to zero indicates identical colors.

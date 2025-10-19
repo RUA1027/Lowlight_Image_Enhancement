@@ -9,7 +9,7 @@ if NAFNET_ROOT not in sys.path:
     sys.path.insert(0, NAFNET_ROOT)
 
 from basicsr.models.archs.NAFNet_arch import NAFNet  # pyright: ignore[reportMissingImports]
-from newbp_layer import NewBPLayer, CrosstalkPSF, build_psf_kernels
+from .newbp_layer import NewBPLayer, CrosstalkPSF, build_psf_kernels  # 使用相对导入
 
 
 logger = logging.getLogger(__name__)
