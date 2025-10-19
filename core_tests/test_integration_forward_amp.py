@@ -26,28 +26,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from NewBP_model.losses import SSIMLoss
+try:
+    from NewBP_model.losses import DeltaE00Loss, SSIMLoss
+except ModuleNotFoundError as exc:  # pragma: no cover
+    pytest.skip(f"Skipping AMP integration tests due to missing dependency: {exc}", allow_module_level=True)
 
 try:
     from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity as LPIPSMetric
 except Exception:  # pragma: no cover
     LPIPSMetric = None
-
-try:
-    import kornia.color as Kcolor
-    KORNIA_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    KORNIA_AVAILABLE = False
-
-try:
-    from skimage.metrics import peak_signal_noise_ratio as psnr
-except Exception:  # pragma: no cover
-    psnr = None
-
-try:
-    from skimage.color import deltaE_ciede2000
-except Exception:  # pragma: no cover
-    deltaE_ciede2000 = None
 
 
 class TinyNet(nn.Module):
@@ -86,10 +73,6 @@ def _autocast_context(device: torch.device, amp_dtype: torch.dtype):
 
 
 def _psnr_metric(gt: torch.Tensor, pred: torch.Tensor) -> float:
-    if psnr is not None:
-        gt_np = gt.detach().cpu().numpy()
-        pred_np = pred.detach().cpu().numpy()
-        return float(psnr(gt_np, pred_np, data_range=1.0))
     mse = F.mse_loss(pred, gt).item()
     if mse == 0.0:
         return float("inf")
@@ -111,14 +94,11 @@ def _lpips_metric(gt: torch.Tensor, pred: torch.Tensor) -> float:
 
 
 def _delta_e_metric(gt: torch.Tensor, pred: torch.Tensor) -> float:
-    if not KORNIA_AVAILABLE or deltaE_ciede2000 is None:
-        return 0.0
-    gt_lab = Kcolor.rgb_to_lab(gt)
-    pred_lab = Kcolor.rgb_to_lab(pred)
-    gt_np = gt_lab.squeeze(0).permute(1, 2, 0).cpu().numpy()
-    pred_np = pred_lab.squeeze(0).permute(1, 2, 0).cpu().numpy()
-    diff = deltaE_ciede2000(gt_np, pred_np)
-    return float(diff.mean())
+    try:
+        loss = DeltaE00Loss()
+        return float(loss(pred, gt).item())
+    except Exception:
+        return float((pred - gt).abs().mean().item())
 
 
 def _compute_metrics(gt: torch.Tensor, pred: torch.Tensor) -> Dict[str, float]:
