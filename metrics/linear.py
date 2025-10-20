@@ -6,6 +6,8 @@ and Wang et al. (2004), using explicit control over data range, window shape and
 padding so that results stay reproducible across datasets and hardware.
 """
 
+# type: ignore  # Suppress Pylance false positives for torch attributes
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -55,6 +57,8 @@ def _ensure_nchw(pred: Tensor, target: Tensor) -> tuple[Tensor, Tensor]:
 
     if pred.shape[0] == 0:
         raise ValueError("Batch dimension cannot be zero.")
+    if pred.shape[1] == 0:
+        raise ValueError("Channel dimension cannot be zero.")
     if pred.shape[2] == 0 or pred.shape[3] == 0:
         raise ValueError("Spatial dimensions must be strictly positive.")
 
@@ -292,12 +296,14 @@ def ssim_linear(
     mu_y = F.conv2d(target_padded, kernel, groups=c)
     mu_x2 = mu_x.pow(2)
     mu_y2 = mu_y.pow(2)
+    mu_xy = mu_x * mu_y
 
     sigma_x2 = F.conv2d(pred_padded * pred_padded, kernel, groups=c) - mu_x2
     sigma_y2 = F.conv2d(target_padded * target_padded, kernel, groups=c) - mu_y2
-    sigma_xy = F.conv2d(pred_padded * target_padded, kernel, groups=c) - mu_x * mu_y
+    sigma_xy = F.conv2d(pred_padded * target_padded, kernel, groups=c) - mu_xy
 
     # Clamp variances to avoid numerical instability from negative values
+    # due to floating-point precision errors
     sigma_x2 = torch.clamp(sigma_x2, min=0.0)
     sigma_y2 = torch.clamp(sigma_y2, min=0.0)
 
