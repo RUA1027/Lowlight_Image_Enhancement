@@ -14,3 +14,15 @@ kornia>=0.6.8
 scikit-image>=0.19.0
 scikit-learn>=1.0.0
 Pillow>=9.0.0
+
+# NAFNet 中需要
+addict
+future
+lmdb
+opencv-python
+Pillow
+pyyaml
+requests
+tb-nightly
+yapf
+torchsummary
