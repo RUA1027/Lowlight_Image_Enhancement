@@ -185,7 +185,8 @@ def _deltaE00_lab_map(
     delta_e_squared = l_term * l_term + c_term * c_term + h_term * h_term + r_t * c_term * h_term
     delta_e = torch.sqrt(torch.clamp(delta_e_squared, min=0.0))
 
-    return delta_e.unsqueeze(1)
+    # Return shape [N, H, W] without extra channel dimension
+    return delta_e
 
 
 def _compute_percentiles(values: Tensor, percentiles: Iterable[float]) -> Dict[str, float]:
@@ -297,6 +298,10 @@ along edges.
     lab_pred = _srgb_to_lab(_ensure_nchw(pred_srgb, target_srgb)[0], whitepoint=kwargs.get("whitepoint", "D65-2"))
     l_channel = lab_pred[:, 0:1]
     grad = _sobel_magnitude(l_channel)
+
+    # Ensure de_map has channel dimension for consistency
+    if de_map.ndim == 3:  # [N, H, W]
+        de_map = de_map.unsqueeze(1)  # [N, 1, H, W]
 
     threshold = torch.quantile(grad.view(grad.shape[0], -1), q, dim=1, keepdim=True)
     mask = grad >= threshold.view(-1, 1, 1, 1)
