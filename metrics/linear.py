@@ -297,6 +297,10 @@ def ssim_linear(
     sigma_y2 = F.conv2d(target_padded * target_padded, kernel, groups=c) - mu_y2
     sigma_xy = F.conv2d(pred_padded * target_padded, kernel, groups=c) - mu_x * mu_y
 
+    # Clamp variances to avoid numerical instability from negative values
+    sigma_x2 = torch.clamp(sigma_x2, min=0.0)
+    sigma_y2 = torch.clamp(sigma_y2, min=0.0)
+
     c1 = (k1 * float(data_range)) ** 2
     c2 = (k2 * float(data_range)) ** 2
 

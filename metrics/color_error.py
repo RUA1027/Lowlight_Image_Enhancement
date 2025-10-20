@@ -30,8 +30,12 @@ _SOBEL_Y_KERNEL = torch.tensor(
 ).view(1, 1, 3, 3)
 
 
-def _ensure_nchw(rgb1: Tensor, rgb2: Tensor) -> Tuple[Tensor, Tensor]:
-    """Ensure sRGB tensors are compatible and batched in NCHW format."""
+def _ensure_nchw(rgb1: Tensor, rgb2: Tensor) -> Tuple[Tensor, Tensor, bool]:
+    """Ensure sRGB tensors are compatible and batched in NCHW format.
+    
+    Returns:
+        (rgb1, rgb2, was_3d) where was_3d indicates if inputs were 3D tensors.
+    """
 
     if not isinstance(rgb1, Tensor) or not isinstance(rgb2, Tensor):
         raise TypeError("deltaE2000 functions expect torch.Tensor inputs.")
@@ -41,9 +45,12 @@ def _ensure_nchw(rgb1: Tensor, rgb2: Tensor) -> Tuple[Tensor, Tensor]:
         )
     if rgb1.device != rgb2.device:
         raise ValueError("pred_srgb and target_srgb must reside on the same device.")
+    
+    was_3d = False
     if rgb1.ndim == 3:
         rgb1 = rgb1.unsqueeze(0)
         rgb2 = rgb2.unsqueeze(0)
+        was_3d = True
     elif rgb1.ndim != 4:
         raise ValueError(
             "Expected tensors with 3 (C,H,W) or 4 (N,C,H,W) dimensions; "
@@ -55,7 +62,7 @@ def _ensure_nchw(rgb1: Tensor, rgb2: Tensor) -> Tuple[Tensor, Tensor]:
         raise ValueError("pred_srgb contains NaN or Inf values.")
     if not torch.isfinite(rgb2).all():
         raise ValueError("target_srgb contains NaN or Inf values.")
-    return rgb1.detach(), rgb2.detach()
+    return rgb1.detach(), rgb2.detach(), was_3d
 
 
 def _srgb_to_lab(rgb: Tensor, *, whitepoint: _WHITEPOINT) -> Tensor:
@@ -127,16 +134,26 @@ def _deltaE00_lab_map(
     delta_L_prime = L2 - L1
     delta_C_prime = c2_prime - c1_prime
 
-    delta_h_prime = h2_prime - h1_prime
+    # Calculate delta_h_prime following Sharma et al. (2005)
+    # When either c1_prime or c2_prime is zero, delta_h_prime is zero
+    delta_h_prime = torch.zeros_like(h1_prime)
+    valid_mask = (c1_prime * c2_prime) != 0.0
+    
+    diff = h2_prime - h1_prime
     delta_h_prime = torch.where(
-        delta_h_prime > torch.pi,
-        delta_h_prime - 2.0 * torch.pi,
-        delta_h_prime,
+        valid_mask & (torch.abs(diff) <= torch.pi),
+        diff,
+        delta_h_prime
     )
     delta_h_prime = torch.where(
-        delta_h_prime < -torch.pi,
-        delta_h_prime + 2.0 * torch.pi,
-        delta_h_prime,
+        valid_mask & (diff > torch.pi),
+        diff - 2.0 * torch.pi,
+        delta_h_prime
+    )
+    delta_h_prime = torch.where(
+        valid_mask & (diff < -torch.pi),
+        diff + 2.0 * torch.pi,
+        delta_h_prime
     )
 
     delta_H_prime = 2.0 * torch.sqrt(c1_prime * c2_prime + eps) * torch.sin(delta_h_prime / 2.0)
@@ -144,17 +161,21 @@ def _deltaE00_lab_map(
     L_bar_prime = 0.5 * (L1 + L2)
     C_bar_prime = 0.5 * (c1_prime + c2_prime)
 
+    # Calculate h_bar_prime following Sharma et al. (2005)
+    # Note: The paper uses degrees, but we work in radians
     h_sum = h1_prime + h2_prime
+    abs_diff = torch.abs(h1_prime - h2_prime)
+    
     h_bar_prime = torch.where(
-        (c1_prime * c2_prime).eq(0.0),
-        h_sum,
+        ~valid_mask,
+        h_sum,  # When c1*c2=0, use h_sum (special case)
         torch.where(
-            torch.abs(h1_prime - h2_prime) <= torch.pi,
+            abs_diff <= torch.pi,  # |h1' - h2'| ≤ 180°
             0.5 * h_sum,
             torch.where(
-                h_sum < 0.0,
+                h_sum < 2.0 * torch.pi,  # h1' + h2' < 360°
                 0.5 * (h_sum + 2.0 * torch.pi),
-                0.5 * (h_sum - 2.0 * torch.pi),
+                0.5 * (h_sum - 2.0 * torch.pi),  # h1' + h2' ≥ 360°
             ),
         ),
     )
@@ -228,7 +249,7 @@ Inputs must be sRGB tensors in [0, 1]. Conversion to Lab uses kornia.color.rgb_t
 
     if eps <= 0:
         raise ValueError(f"`eps` must be positive, received {eps}.")
-    pred, target = _ensure_nchw(pred_srgb, target_srgb)
+    pred, target, was_3d = _ensure_nchw(pred_srgb, target_srgb)
 
     device = pred.device
     dtype = torch.float32
@@ -236,7 +257,13 @@ Inputs must be sRGB tensors in [0, 1]. Conversion to Lab uses kornia.color.rgb_t
     lab_pred = _srgb_to_lab(pred.to(device=device, dtype=dtype), whitepoint=whitepoint)
     lab_target = _srgb_to_lab(target.to(device=device, dtype=dtype), whitepoint=whitepoint)
 
-    return _deltaE00_lab_map(lab_pred, lab_target, kL=kL, kC=kC, kH=kH, eps=eps)
+    result = _deltaE00_lab_map(lab_pred, lab_target, kL=kL, kC=kC, kH=kH, eps=eps)
+    
+    # If input was 3D [C,H,W], squeeze out the batch dimension
+    if was_3d:
+        result = result.squeeze(0)
+    
+    return result
 
 
 @torch.no_grad()
@@ -295,7 +322,8 @@ along edges.
         raise ValueError(f"q must lie within (0,1); received {q}.")
 
     de_map = deltaE2000_map(pred_srgb, target_srgb, **kwargs)
-    lab_pred = _srgb_to_lab(_ensure_nchw(pred_srgb, target_srgb)[0], whitepoint=kwargs.get("whitepoint", "D65-2"))
+    pred_norm, target_norm, was_3d = _ensure_nchw(pred_srgb, target_srgb)
+    lab_pred = _srgb_to_lab(pred_norm, whitepoint=kwargs.get("whitepoint", "D65-2"))
     l_channel = lab_pred[:, 0:1]
     grad = _sobel_magnitude(l_channel)
 
