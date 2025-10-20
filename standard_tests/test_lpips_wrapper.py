@@ -83,9 +83,14 @@ def test_value_ranges_and_gray_support(
     import pytest
     with pytest.raises(ValueError):
         metric(gt, gray)
+    
+    # 测试灰度图像自身的LPIPS计算
+    gray_stats = metric(gray, gray)
+    assert gray_stats["mean"] <= 1e-6
+    
     assert "net" in same and same["net"] == "alex"
     assert "version" in same and same["version"] == "0.1"
-    assert isinstance(gray_stats["per_image"], list) and len(gray_stats["per_image"]) == gt.shape[0]
+    assert isinstance(gray_stats["per_image"], list) and len(gray_stats["per_image"]) == gray.shape[0]
 
 
 def test_size_alignment_policies(make_images: Callable[..., torch.Tensor]) -> None:

@@ -8,6 +8,7 @@ torchmetrics>=1.2.0
 lpips==0.1.4
 fvcore==0.1.5.post20221221
 pytest>=7.3.0
+kornia>=0.6.8
 
 # 可选依赖（如有用到）
 scikit-image>=0.19.0
