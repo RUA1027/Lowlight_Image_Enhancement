@@ -58,6 +58,14 @@ def test_imports():
         return False
     
     try:
+        # Sony SID dataset preprocessing
+        from datasets import SonySIDDataset  # noqa: F401
+        print("✓ Sony SID 数据集模块导入成功")
+    except Exception as e:
+        print(f"✗ Sony SID 数据集模块导入失败: {e}")
+        return False
+
+    try:
         # 测试损失函数导入
         # from NewBP_model.losses import PhysicsConsistencyLoss
         print("✓ 物理一致性损失函数导入成功 (PhysicalConsistencyLossSRGB in use)")
