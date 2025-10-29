@@ -1,28 +1,57 @@
+# 统一依赖（Lowlight_image_enhancement + NAFNet + SwinIR + UNet）
+# 适用环境：Windows 10/11, Python >=3.8, CUDA 11.8（可选）+ PyTorch 2.0.1
+# 说明：
+# - 主依赖采用稳定版本，避免重复和冲突
+# - SwinIR/NAFNet/UNet/主项目均可用
+# - 仅保留必要依赖，训练/可视化/分析工具为可选
+
+# --- 深度学习核心 ---
 torch==2.0.1
 torchvision==0.15.2
-numpy>=1.23.0,<1.27.0
-scipy>=1.10.0,<1.13.0
-einops>=0.7.0
-tqdm>=4.65.0
-torchmetrics>=1.2.0
+
+# --- 数组与科学计算 ---
+numpy==1.24.4
+scipy==1.10.1
+
+# --- 图像与CV工具 ---
+Pillow==9.5.0
+opencv-python==4.8.1.78
+scikit-image==0.21.0
+scikit-learn==1.3.2
+
+# --- 训练/评估工具 ---
+tqdm==4.66.1
+einops==0.7.0
+kornia==0.6.12
 lpips==0.1.4
+torchmetrics==1.2.0
+
+# --- 日志/IO/配置 ---
+addict==2.4.0
+future==0.18.3
+lmdb==1.4.1
+pyyaml==6.0.1
+requests==2.31.0
+tensorboard==2.14.0
+
+# --- FLOPs/参数分析 ---
 fvcore==0.1.5.post20221221
+iopath==0.1.10
+yacs==0.1.8
+termcolor==2.3.0
+tabulate==0.9.0
+
+# --- SwinIR 依赖 ---
+timm==0.9.5
+
+# --- 测试 ---
 pytest>=7.3.0
-kornia>=0.6.8
 
-# 可选依赖（如有用到）
-scikit-image>=0.19.0
-scikit-learn>=1.0.0
-Pillow>=9.0.0
+# --- 可选（如需可视化/训练日志） ---
+# matplotlib==3.7.3  # 仅UNet可视化用
+# wandb==0.13.5      # 仅训练日志用
 
-# NAFNet 中需要
-addict
-future
-lmdb
-opencv-python
-Pillow
-pyyaml
-requests
-tb-nightly
-yapf
-torchsummary
+# 备注：
+# - Pillow 只保留一个版本，避免冲突
+# - CUDA/驱动不兼容时可用CPU版本
+# - 如有特殊需求请补充
