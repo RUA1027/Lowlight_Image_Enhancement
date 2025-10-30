@@ -5,17 +5,24 @@
 # Copyright 2018-2020 BasicSR Authors
 # ------------------------------------------------------------------------
 import importlib
-import torch
-import torch.nn.functional as F
 from collections import OrderedDict
 from copy import deepcopy
 from os import path as osp
+from typing import Optional
+
+import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 
 from basicsr.models.archs import define_network
 from basicsr.models.base_model import BaseModel
 from basicsr.utils import get_root_logger, imwrite, tensor2img
 from basicsr.utils.dist_util import get_dist_info
+
+try:
+    from NewBP_model.newbp_net_arch import create_crosstalk_psf  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    create_crosstalk_psf = None
 
 loss_module = importlib.import_module('basicsr.models.losses')
 metric_module = importlib.import_module('basicsr.metrics')
@@ -46,6 +53,7 @@ class ImageRestorationModel(BaseModel):
         train_opt = self.opt['train']
 
         # define losses
+        self.cri_hybrid = None
         if train_opt.get('pixel_opt'):
             pixel_type = train_opt['pixel_opt'].pop('type')
             cri_pix_cls = getattr(loss_module, pixel_type)
@@ -63,7 +71,34 @@ class ImageRestorationModel(BaseModel):
             self.cri_perceptual = None
 
         if self.cri_pix is None and self.cri_perceptual is None:
-            raise ValueError('Both pixel and perceptual losses are None.')
+            get_root_logger().warning('Pixel and perceptual losses are disabled.')
+
+        if train_opt.get('hybrid_opt'):
+            hybrid_opt = train_opt['hybrid_opt']
+            hybrid_type = hybrid_opt.pop('type')
+            cri_hybrid_cls = getattr(loss_module, hybrid_type)
+            hybrid_kwargs = dict(hybrid_opt)
+            physics_cfg: Optional[dict] = hybrid_kwargs.pop('physics', None)
+
+            requested_device = hybrid_kwargs.pop('device', 'auto')
+            if requested_device == 'auto':
+                hybrid_kwargs['device'] = self.device.type if isinstance(self.device, torch.device) else str(self.device)
+            else:
+                hybrid_kwargs['device'] = requested_device
+
+            if physics_cfg:
+                if create_crosstalk_psf is None:
+                    raise ImportError(
+                        "NewBP_model.newbp_net_arch is required to build the physics PSF module."
+                    )
+                psf_mode = physics_cfg.get('mode', 'mono')
+                kernel_spec = physics_cfg.get('kernel_spec', 'P2')
+                hybrid_kwargs['physics_psf_module'] = create_crosstalk_psf(
+                    psf_mode=psf_mode,
+                    kernel_spec=kernel_spec,
+                )
+
+            self.cri_hybrid = cri_hybrid_cls(**hybrid_kwargs).to(self.device)
 
         # set up optimizers and schedulers
         self.setup_optimizers()
@@ -105,6 +140,24 @@ class ImageRestorationModel(BaseModel):
         self.lq = data['lq'].to(self.device)
         if 'gt' in data:
             self.gt = data['gt'].to(self.device)
+        self.short_raw = data.get('short_raw')
+        if self.short_raw is not None:
+            self.short_raw = self.short_raw.to(self.device)
+        self.long_raw = data.get('long_raw')
+        if self.long_raw is not None:
+            self.long_raw = self.long_raw.to(self.device)
+        self.short_obs = data.get('short_obs')
+        if self.short_obs is not None:
+            self.short_obs = self.short_obs.to(self.device)
+        self.expo_ratio = data.get('expo_ratio')
+        if self.expo_ratio is not None:
+            expo = self.expo_ratio.to(self.device)
+            if expo.ndim == 1:
+                expo = expo.view(-1, 1, 1, 1)
+            elif expo.ndim == 2:
+                expo = expo.view(expo.size(0), expo.size(1), 1, 1)
+            self.expo_ratio = expo
+        self.metadata = data.get('metadata')
 
     def grids(self):
         b, c, h, w = self.gt.size()
@@ -220,6 +273,32 @@ class ImageRestorationModel(BaseModel):
             if l_style is not None:
                 l_total += l_style
                 loss_dict['l_style'] = l_style
+
+        if self.cri_hybrid is not None:
+            expo_ratio = self.expo_ratio
+            if expo_ratio is None:
+                expo_ratio = torch.ones(
+                    (self.output.size(0), 1, 1, 1),
+                    dtype=self.output.dtype,
+                    device=self.output.device,
+                )
+
+            long_raw = self.long_raw if self.long_raw is not None else self.gt
+            short_raw = self.short_raw if self.short_raw is not None else self.lq
+            short_srgb = self.short_obs if self.short_obs is not None else None
+
+            hybrid_total, hybrid_logs = self.cri_hybrid(
+                Bhat_raw=self.output,
+                B_raw=long_raw,
+                A_raw=short_raw,
+                expo_ratio=expo_ratio,
+                Bhat_srgb01=self.output.clamp(0.0, 1.0),
+                B_srgb01=self.gt.clamp(0.0, 1.0),
+                A_srgb01=short_srgb.clamp(0.0, 1.0) if short_srgb is not None else None,
+            )
+            l_total += hybrid_total
+            for name, value in hybrid_logs.items():
+                loss_dict[f'hybrid_{name}'] = value
 
 
         l_total = l_total + 0. * sum(p.sum() for p in self.net_g.parameters())

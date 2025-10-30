@@ -32,6 +32,8 @@ _dataset_modules = [
     for file_name in dataset_filenames
 ]
 
+from .sony_sid_lmdb_dataset import SonySIDLMDBDataset  # noqa: E402,F401
+
 
 def create_dataset(dataset_opt):
     """Create dataset.

@@ -1,0 +1,122 @@
+name: SID_NewBP_Mono
+model_type: ImageRestorationModel
+scale: 1
+manual_seed: 42
+
+datasets:
+  train:
+    name: SID-train
+    type: SonySIDLMDBDataset
+    phase: train
+    manifest_path: /content/drive/MyDrive/Lowlight/SID/manifest_sid.json
+    subset: train
+    patch_size: 512
+    samples_per_pair: 4
+    random_crop: true
+    batch_size_per_gpu: 4
+    num_worker_per_gpu: 4
+    pin_memory: true
+    prefetch_mode: cuda
+    io_backend:
+      type: lmdb
+      db_paths:
+        - /content/drive/MyDrive/Lowlight/SID/lmdb/train_short.lmdb
+        - /content/drive/MyDrive/Lowlight/SID/lmdb/train_long.lmdb
+      client_keys:
+        - short
+        - long
+  val:
+    name: SID-val
+    type: SonySIDLMDBDataset
+    phase: val
+    manifest_path: /content/drive/MyDrive/Lowlight/SID/manifest_sid.json
+    subset: val
+    random_crop: false
+    samples_per_pair: 1
+    batch_size_per_gpu: 1
+    num_worker_per_gpu: 1
+    pin_memory: false
+    io_backend:
+      type: lmdb
+      db_paths:
+        - /content/drive/MyDrive/Lowlight/SID/lmdb/val_short.lmdb
+        - /content/drive/MyDrive/Lowlight/SID/lmdb/val_long.lmdb
+      client_keys:
+        - short
+        - long
+
+network_g:
+  type: NewBPNAFNet
+  in_channels: 3
+  kernel_type: panchromatic
+  kernel_spec: P2
+  nafnet_params:
+    img_channel: 3
+    width: 32
+    enc_blk_nums: [2, 2, 4, 8]
+    middle_blk_num: 12
+    dec_blk_nums: [2, 2, 2, 2]
+
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+
+train:
+  total_iter: 300000
+  warmup_iter: -1
+  optim_g:
+    type: AdamW
+    lr: 5.0e-4
+    betas: [0.9, 0.999]
+    weight_decay: 0.01
+  scheduler:
+    type: TrueCosineAnnealingLR
+    T_max: 300000
+    eta_min: 1.0e-6
+  pixel_opt: ~
+  hybrid_opt:
+    type: HybridLossPlus
+    device: auto
+    w_l1_raw: 1.0
+    w_perc: 0.02
+    w_lpips: 0.05
+    w_deltaE: 0.02
+    w_ssim: 0.0
+    w_phys: 0.1
+    use_deltaE: true
+    use_ssim: false
+    use_lpips: true
+    use_phys: true
+    use_uncertainty: false
+    physics:
+      mode: mono
+      kernel_spec: P2
+  use_grad_clip: true
+
+val:
+  val_freq: 5000
+  save_img: false
+  use_image: false
+  metrics:
+    psnr_linear:
+      type: linear_psnr
+      data_range: 1.0
+    ssim_linear:
+      type: linear_ssim
+      data_range: 1.0
+    lpips_vgg:
+      type: lpips_distance
+      net: vgg
+    deltaE_mean:
+      type: deltae2000_mean
+    deltaE_edge:
+      type: edge_deltae2000_mean
+
+logger:
+  print_freq: 100
+  save_checkpoint_freq: 5000
+  use_tb_logger: true
+
+dist_params:
+  backend: nccl

@@ -1,0 +1,112 @@
+name: SID_SwinIR_Baseline
+model_type: ImageRestorationModel
+scale: 1
+manual_seed: 42
+
+datasets:
+  train:
+    name: SID-train
+    type: SonySIDLMDBDataset
+    phase: train
+    manifest_path: /content/drive/MyDrive/Lowlight/SID/manifest_sid.json
+    subset: train
+    patch_size: 512
+    samples_per_pair: 4
+    random_crop: true
+    batch_size_per_gpu: 4
+    num_worker_per_gpu: 4
+    pin_memory: true
+    prefetch_mode: cuda
+    io_backend:
+      type: lmdb
+      db_paths:
+        - /content/drive/MyDrive/Lowlight/SID/lmdb/train_short.lmdb
+        - /content/drive/MyDrive/Lowlight/SID/lmdb/train_long.lmdb
+      client_keys:
+        - short
+        - long
+  val:
+    name: SID-val
+    type: SonySIDLMDBDataset
+    phase: val
+    manifest_path: /content/drive/MyDrive/Lowlight/SID/manifest_sid.json
+    subset: val
+    random_crop: false
+    samples_per_pair: 1
+    batch_size_per_gpu: 1
+    num_worker_per_gpu: 1
+    pin_memory: false
+    io_backend:
+      type: lmdb
+      db_paths:
+        - /content/drive/MyDrive/Lowlight/SID/lmdb/val_short.lmdb
+        - /content/drive/MyDrive/Lowlight/SID/lmdb/val_long.lmdb
+      client_keys:
+        - short
+        - long
+
+network_g:
+  type: SwinIRRestoration
+  upscale: 1
+  in_chans: 3
+  img_size: 128
+  window_size: 8
+  img_range: 1.0
+  depths: [6, 6, 6, 6, 6, 6]
+  embed_dim: 96
+  num_heads: [6, 6, 6, 6, 6, 6]
+  mlp_ratio: 4.0
+  resi_connection: "1conv"
+  upsampler: ""
+  patch_norm: true
+
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+
+train:
+  total_iter: 300000
+  warmup_iter: -1
+  optim_g:
+    type: AdamW
+    lr: 1.0e-4
+    betas: [0.9, 0.999]
+    weight_decay: 0.01
+  scheduler:
+    type: TrueCosineAnnealingLR
+    T_max: 300000
+    eta_min: 1.0e-6
+  pixel_opt:
+    type: CharbonnierLoss
+    loss_weight: 1.0
+    reduction: mean
+    eps: 1.0e-12
+  use_grad_clip: true
+
+val:
+  val_freq: 5000
+  save_img: false
+  use_image: false
+  metrics:
+    psnr_linear:
+      type: linear_psnr
+      data_range: 1.0
+    ssim_linear:
+      type: linear_ssim
+      data_range: 1.0
+    lpips_vgg:
+      type: lpips_distance
+      net: vgg
+    deltaE_mean:
+      type: deltae2000_mean
+    deltaE_edge:
+      type: edge_deltae2000_mean
+
+logger:
+  print_freq: 100
+  save_checkpoint_freq: 5000
+  use_tb_logger: true
+
+dist_params:
+  backend: nccl

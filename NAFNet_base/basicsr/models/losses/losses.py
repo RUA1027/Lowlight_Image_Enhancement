@@ -24,9 +24,10 @@ def mse_loss(pred, target):
     return F.mse_loss(pred, target, reduction='none')
 
 
-# @weighted_loss
-# def charbonnier_loss(pred, target, eps=1e-12):
-#     return torch.sqrt((pred - target)**2 + eps)
+@weighted_loss
+def charbonnier_loss(pred, target, eps=1e-12):
+    diff = pred - target
+    return torch.sqrt(diff * diff + eps)
 
 
 class L1Loss(nn.Module):
@@ -86,6 +87,23 @@ class MSELoss(nn.Module):
         """
         return self.loss_weight * mse_loss(
             pred, target, weight, reduction=self.reduction)
+
+
+class CharbonnierLoss(nn.Module):
+    """Robust Charbonnier loss (smooth L1)."""
+
+    def __init__(self, loss_weight=1.0, reduction='mean', eps=1e-12):
+        super().__init__()
+        if reduction not in ['none', 'mean', 'sum']:
+            raise ValueError(
+                f'Unsupported reduction mode: {reduction}. Supported ones are: {_reduction_modes}')
+        self.loss_weight = loss_weight
+        self.reduction = reduction
+        self.eps = eps
+
+    def forward(self, pred, target, weight=None, **kwargs):
+        return self.loss_weight * charbonnier_loss(
+            pred, target, weight, reduction=self.reduction, eps=self.eps)
 
 class PSNRLoss(nn.Module):
 
