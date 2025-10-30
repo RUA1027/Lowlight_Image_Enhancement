@@ -1,10 +1,10 @@
 # Colab 笔记本：NewBP + NAFNet（RGB-PSF）全流程指南
 
-> 本指南适用于 **RGB-PSF** 实验（NewBP-B）。按顺序执行，即可在独立 Colab 笔记本中完成全部步骤。
+> 本指南用于在独立 Colab 笔记本中完成 RGB-PSF（NewBP-B）实验，提供在线下载与手动上传两种数据导入方式，以及数据校验命令。
 
 ---
 
-## 第 0 步：挂载 Google Drive 并创建工作区
+## 第 0 步：挂载 Google Drive 并初始化目录
 
 ```python
 from google.colab import drive
@@ -17,26 +17,48 @@ BASE_DIR = "/content/drive/MyDrive/Lowlight/SID_experiments"
 
 ---
 
-## 第 1 步：下载并解压 SID 数据集
+## 第 1 步：准备 Sony (SID) 数据集
 
-若 Drive 中已有 `SID_raw/Sony/short,long`，可跳过此步。示例命令（需自行替换链接或文件 ID）：
+### 方式 A：手动上传/同步（建议优先）
+1. 将 `Sony.zip` 或解压后的 `Sony` 文件夹上传到 `MyDrive/Lowlight/SID_raw/`。
+2. 上传后执行：
+   ```bash
+   !mkdir -p /content/drive/MyDrive/Lowlight/SID_raw
+   %cd /content/drive/MyDrive/Lowlight/SID_raw
+   # 上传的是 ZIP 时，可取消注释解压
+   # !unzip -q Sony.zip
+   ```
 
+### 方式 B：尝试在线下载（若失败请改用方式 A）
 ```bash
 !mkdir -p /content/drive/MyDrive/Lowlight/SID_raw
 %cd /content/drive/MyDrive/Lowlight/SID_raw
 
-# wget 示例
-!wget -O SID_Sony.zip "https://[SID_DATASET_DOWNLOAD_LINK]"
+!wget --no-verbose -O Sony.zip "https://storage.googleapis.com/isl-datasets/SID/Sony.zip" || echo "官方直链下载失败，请改用 gdown 或手动上传。"
+!gdown --id 1P8dkX1bMErx6-8sszv_2i5Vi1Ndo63ok -O Sony.zip || echo "gdown 下载失败，请手动上传。"
 
-# gdown 示例
-# !gdown --id [FILE_ID] -O SID_Sony.zip
+!unzip -q Sony.zip
+```
 
-!unzip -q SID_Sony.zip
+### 校验 RAW 数据
+```python
+from pathlib import Path
+short_dir = Path("/content/drive/MyDrive/Lowlight/SID_raw/Sony/short")
+long_dir = Path("/content/drive/MyDrive/Lowlight/SID_raw/Sony/long")
+
+if short_dir.is_dir() and long_dir.is_dir():
+    short_cnt = len(list(short_dir.glob("*.ARW")))
+    long_cnt = len(list(long_dir.glob("*.ARW")))
+    print(f"short RAW: {short_cnt} 份, long RAW: {long_cnt} 份")
+    if short_cnt == 0 or long_cnt == 0:
+        raise SystemExit("RAW 数量为 0，请确认上传/下载是否完成。")
+else:
+    raise SystemExit("未检测到 Sony RAW 目录，请检查路径或重新上传。")
 ```
 
 ---
 
-## 第 2 步：克隆主项目与依赖仓库
+## 第 2 步：克隆项目与依赖仓库
 
 ```bash
 %cd /content/drive/MyDrive/Lowlight/SID_experiments
@@ -59,7 +81,7 @@ BASE_DIR = "/content/drive/MyDrive/Lowlight/SID_experiments"
 
 ---
 
-## 第 4 步：配置 Python 依赖路径
+## 第 4 步：配置 Python 路径
 
 ```python
 import sys
@@ -74,7 +96,7 @@ for p in [
 
 ---
 
-## 第 5 步：RAW → 16-bit PNG 转换
+## 第 5 步：RAW → 16-bit PNG
 
 ```bash
 %cd /content/drive/MyDrive/Lowlight/SID_experiments/Lowlight_Image_Enhancement
@@ -86,7 +108,7 @@ for p in [
 
 ---
 
-## 第 6 步：生成 manifest（确保划分一致）
+## 第 6 步：生成 manifest（固定划分）
 
 ```bash
 !python tools/prepare_sid_manifest.py \
@@ -98,7 +120,7 @@ for p in [
 
 ---
 
-## 第 7 步：创建 LMDB 数据库
+## 第 7 步：创建 LMDB
 
 ```bash
 !python tools/create_sid_lmdb.py \
@@ -111,22 +133,16 @@ for p in [
 
 ---
 
-## 第 8 步：检查 RGB-PSF 配置文件
+## 第 8 步：核对 RGB-PSF 配置
 
-配置文件位于 `configs/colab/sid_newbp_rgb.yml`，默认设置如下：
+`configs/colab/sid_newbp_rgb.yml` 默认启用：
 
 - `network_g.type: NewBPNAFNet`
 - `train.hybrid_opt.physics.mode: rgb`
-- `physics.kernel_spec: B2`（RGB PSF）
+- `physics.kernel_spec: B2`
 - `train.enable_amp: true`
 
-若路径与默认不符，请修改以下字段以匹配当前目录：
-
-- `datasets.train/val.manifest_path`
-- `datasets.*.io_backend.db_paths`
-- （可选）`path` 段中日志、模型输出位置
-
-请确保 Mono 与 RGB 实验共享相同的 manifest/LMDB，以便公平对比。
+如目录不同，请调整 `datasets.*.manifest_path`、`datasets.*.io_backend.db_paths` 与 `path` 段。
 
 ---
 
@@ -137,11 +153,11 @@ for p in [
 !python basicsr/train.py -opt ../configs/colab/sid_newbp_rgb.yml
 ```
 
-训练过程中会启用混合损失（L1 + 感知 + LPIPS + ΔE_00 + RGB 物理一致性）及 AMP。若显存不足，请同步调低 `batch_size_per_gpu` 与 `patch_size`。
+若显存不足，记得与其他模型同步调整 `batch_size_per_gpu` / `patch_size`。
 
 ---
 
-## 第 10 步：监控与指标评估
+## 第 10 步：监控与测试评估
 
 ### 10.1 TensorBoard
 ```python
@@ -151,15 +167,14 @@ tensorboard --logdir ${TENSORBOARD_LOG}
 ```
 
 ### 10.2 测试集评估（可选）
-
-在配置文件中新增 `datasets.test` 节点（结构同 `val`，指向 `test_*` LMDB），然后重新运行第 9 步命令即可对测试集计算全套指标（线性域 PSNR/SSIM、LPIPS、ΔE_00、Edge-ΔE_00）。
+在配置文件新增 `datasets.test` 节点指向 `test_short.lmdb` 与 `test_long.lmdb`，保存后重新执行第 9 步即可评估 PSNR、SSIM、LPIPS、ΔE₀₀、Edge-ΔE₀₀。
 
 ---
 
-## 第 11 步：收尾与维护
+## 第 11 步：收尾
 
-- **断点续训**：设置 `path.resume_state` 为最新 `*.state` 文件即可续训。
-- **显存清理**：`import torch; torch.cuda.empty_cache()`。
-- **成果管理**：训练权重与日志保存在 `experiments/SID_NewBP_RGB`（默认名称），建议及时备份。
+- **断点续训**：设置 `path.resume_state` 为最新 `*.state` 文件。
+- **释放显存**：`import torch; torch.cuda.empty_cache()`。
+- **备份成果**：输出默认位于 `experiments/SID_NewBP_RGB`。
 
-至此，RGB-PSF 实验已全部完成，可与其他模型结果进行对比分析。***
+完成以上步骤，RGB-PSF 实验即告完成。***

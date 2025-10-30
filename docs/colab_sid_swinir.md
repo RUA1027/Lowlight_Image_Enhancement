@@ -1,10 +1,10 @@
 # Colab 笔记本：SwinIR (Baseline) 全流程指南
 
-> 本指南用于在 **单独的 Colab 笔记本** 内完成 Sony SID 数据准备与 SwinIR 训练。所有步骤均给出完整命令，无需参考其他文件。
+> 在本笔记本中，从数据准备到训练评估均给出完整命令，并提供“手动上传/同步”与“在线下载”两种方式获取 Sony (See-in-the-Dark) 数据集。
 
 ---
 
-## 第 0 步：挂载 Google Drive 并初始化目录
+## 第 0 步：挂载 Google Drive 并准备工作目录
 
 ```python
 from google.colab import drive
@@ -17,28 +17,50 @@ BASE_DIR = "/content/drive/MyDrive/Lowlight/SID_experiments"
 
 ---
 
-## 第 1 步：下载并解压 SID 数据集
+## 第 1 步：准备 Sony (SID) 数据集
 
-若你已手动上传或准备好 `SID_raw/Sony/short, long`，可跳过本步骤。以下命令提供通用模板：
+> 若在线下载失败，请使用手动上传方式，确保最终获得 `SID_raw/Sony/short/*.ARW` 与 `SID_raw/Sony/long/*.ARW`。
 
+### 方式 A：手动上传/同步（推荐）
+1. 将 `Sony.zip` 或已解压的 `Sony` 目录上传到 `MyDrive/Lowlight/SID_raw/`。
+2. 上传完成后执行：
+   ```bash
+   !mkdir -p /content/drive/MyDrive/Lowlight/SID_raw
+   %cd /content/drive/MyDrive/Lowlight/SID_raw
+   # 若上传的是 ZIP，可执行：
+   # !unzip -q Sony.zip
+   ```
+
+### 方式 B：尝试在线下载
 ```bash
 !mkdir -p /content/drive/MyDrive/Lowlight/SID_raw
 %cd /content/drive/MyDrive/Lowlight/SID_raw
 
-# 方式 A：wget（替换 URL）
-!wget -O SID_Sony.zip "https://[SID_DATASET_DOWNLOAD_LINK]"
+!wget --no-verbose -O Sony.zip "https://storage.googleapis.com/isl-datasets/SID/Sony.zip" || echo "官方直链下载失败，请尝试 gdown 或手动上传。"
+!gdown --id 1P8dkX1bMErx6-8sszv_2i5Vi1Ndo63ok -O Sony.zip || echo "gdown 下载失败，请手动上传。"
 
-# 方式 B：gdown（替换 FILE_ID）
-# !gdown --id [FILE_ID] -O SID_Sony.zip
-
-!unzip -q SID_Sony.zip
+!unzip -q Sony.zip
 ```
 
-确保解压后存在 `Sony/short/*.ARW` 与 `Sony/long/*.ARW`。
+### 校验数据是否就绪
+```python
+from pathlib import Path
+short_dir = Path("/content/drive/MyDrive/Lowlight/SID_raw/Sony/short")
+long_dir = Path("/content/drive/MyDrive/Lowlight/SID_raw/Sony/long")
+
+if short_dir.is_dir() and long_dir.is_dir():
+    short_cnt = len(list(short_dir.glob("*.ARW")))
+    long_cnt = len(list(long_dir.glob("*.ARW")))
+    print(f"short RAW 数量: {short_cnt}, long RAW 数量: {long_cnt}")
+    if short_cnt == 0 or long_cnt == 0:
+        raise SystemExit("RAW 文件数量为 0，请检查上传/下载。")
+else:
+    raise SystemExit("未找到 Sony RAW 目录，请重新确认路径。")
+```
 
 ---
 
-## 第 2 步：克隆主项目及所需依赖
+## 第 2 步：克隆项目与依赖仓库
 
 ```bash
 %cd /content/drive/MyDrive/Lowlight/SID_experiments
@@ -52,7 +74,7 @@ BASE_DIR = "/content/drive/MyDrive/Lowlight/SID_experiments"
 
 ---
 
-## 第 3 步：安装依赖包
+## 第 3 步：安装依赖
 
 ```bash
 !pip install -r requirements.txt
@@ -61,22 +83,23 @@ BASE_DIR = "/content/drive/MyDrive/Lowlight/SID_experiments"
 
 ---
 
-## 第 4 步：设置 Python 路径（含 SwinIR）
+## 第 4 步：配置 Python 路径
 
 ```python
 import sys
-for p in [
+EXTRA_PATHS = [
     "/content/drive/MyDrive/Lowlight/SID_experiments/Lowlight_Image_Enhancement",
     "/content/drive/MyDrive/Lowlight/SID_experiments/external/SwinIR",
     "/content/drive/MyDrive/Lowlight/SID_experiments/external/NAFNet",
-]:
+]
+for p in EXTRA_PATHS:
     if p not in sys.path:
         sys.path.append(p)
 ```
 
 ---
 
-## 第 5 步：RAW → 16-bit PNG 转换
+## 第 5 步：RAW → 16-bit PNG
 
 ```bash
 %cd /content/drive/MyDrive/Lowlight/SID_experiments/Lowlight_Image_Enhancement
@@ -88,7 +111,7 @@ for p in [
 
 ---
 
-## 第 6 步：生成 manifest（确保数据划分一致）
+## 第 6 步：生成 manifest（固定划分）
 
 ```bash
 !python tools/prepare_sid_manifest.py \
@@ -100,7 +123,7 @@ for p in [
 
 ---
 
-## 第 7 步：创建 LMDB 加速数据读取
+## 第 7 步：创建 LMDB
 
 ```bash
 !python tools/create_sid_lmdb.py \
@@ -113,15 +136,9 @@ for p in [
 
 ---
 
-## 第 8 步：校验 SwinIR 配置文件
+## 第 8 步：校对 SwinIR 配置
 
-配置文件位置：`configs/colab/sid_swinir_baseline.yml`。若使用默认路径，可直接跳过修改。否则请检查并替换以下路径：
-
-- `datasets.train/val.manifest_path`
-- `datasets.*.io_backend.db_paths`
-- 日志/模型输出（可在 `path` 段自定义）
-
-SwinIR 相关关键参数已在配置中设置（如 `window_size`, `embed_dim` 等），无需额外改动。
+检查 `configs/colab/sid_swinir_baseline.yml` 是否使用正确的 manifest/LMDB 路径，如需自定义日志目录可在 `path` 段修改。
 
 ---
 
@@ -132,13 +149,13 @@ SwinIR 相关关键参数已在配置中设置（如 `window_size`, `embed_dim` 
 !python basicsr/train.py -opt ../configs/colab/sid_swinir_baseline.yml
 ```
 
-若显存不足，可在同一配置文件中统一调整 `batch_size_per_gpu` 与 `patch_size`（请在所有模型中保持一致以维持公平性）。
+如显存不足，请同步调低 `batch_size_per_gpu` 与 `patch_size`（并保持所有模型一致）。
 
 ---
 
-## 第 10 步：指标监控与可视化
+## 第 10 步：监控与测试评估
 
-### 10.1 实时监控（TensorBoard）
+### 10.1 TensorBoard
 ```python
 %load_ext tensorboard
 TENSORBOARD_LOG = "/content/drive/MyDrive/Lowlight/SID_experiments/Lowlight_Image_Enhancement/experiments"
@@ -146,39 +163,14 @@ tensorboard --logdir ${TENSORBOARD_LOG}
 ```
 
 ### 10.2 测试集评估（可选）
-
-若需在测试集上验证，请在 `sid_swinir_baseline.yml` 中新增如下节点，然后重新执行第 9 步：
-
-```yaml
-  test:
-    name: SID-test
-    type: SonySIDLMDBDataset
-    phase: test
-    manifest_path: /content/drive/MyDrive/Lowlight/SID_assets/manifest_sid.json
-    subset: test
-    random_crop: false
-    samples_per_pair: 1
-    batch_size_per_gpu: 1
-    num_worker_per_gpu: 1
-    pin_memory: false
-    io_backend:
-      type: lmdb
-      db_paths:
-        - /content/drive/MyDrive/Lowlight/SID_lmdb/test_short.lmdb
-        - /content/drive/MyDrive/Lowlight/SID_lmdb/test_long.lmdb
-      client_keys:
-        - short
-        - long
-```
-
-脚本会在验证频率（默认 5000 iteration）自动计算 PSNR/SSIM/LPIPS/ΔE00/Edge-ΔE00。
+在配置中新增 `datasets.test` 指向 `test_short.lmdb` 与 `test_long.lmdb`，保存后重复第 9 步即可评估 PSNR、SSIM、LPIPS、ΔE₀₀、Edge-ΔE₀₀。
 
 ---
 
-## 第 11 步：收尾工作
+## 第 11 步：收尾
 
-- **断点续训**：将配置 `path.resume_state` 指向最新的 `*.state` 文件即可恢复。
-- **显存释放**：使用 `import torch; torch.cuda.empty_cache()`。
-- **成果整理**：训练权重、日志、TensorBoard 事件保存在 `experiments/SID_SwinIR_Baseline`（默认名称），可按需备份或迁移。
+- **断点续训**：设置 `path.resume_state` 为最新 `*.state` 文件。
+- **释放显存**：`import torch; torch.cuda.empty_cache()`。
+- **备份成果**：权重与日志位于 `experiments/SID_SwinIR_Baseline`。
 
-完成以上步骤，即可在独立笔记本内完成 SwinIR Baseline 实验。***
+至此，SwinIR Baseline 实验在独立笔记本中完成。***

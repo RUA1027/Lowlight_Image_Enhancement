@@ -1,10 +1,10 @@
 # Colab 笔记本：NAFNet (Baseline) 全流程指南
 
-> 该笔记本独立完成 Sony SID 数据准备、NAFNet Baseline 训练与评估。每个步骤均提供完整命令，可直接复制执行。
+> 本笔记本在独立环境中完成 Sony (See-in-the-Dark) 数据准备与 NAFNet Baseline 训练，包含“手动上传/同步”和“在线下载”两种数据获取方式。
 
 ---
 
-## 第 0 步：挂载 Google Drive 并设置根目录
+## 第 0 步：挂载 Google Drive 并初始化目录
 
 ```python
 from google.colab import drive
@@ -17,26 +17,50 @@ BASE_DIR = "/content/drive/MyDrive/Lowlight/SID_experiments"
 
 ---
 
-## 第 1 步：下载并解压 SID 数据集
+## 第 1 步：准备 Sony (SID) 数据集
 
-若 Drive 中已存在 RAW 数据可跳过，下述命令仅为模板，请按需替换链接或文件 ID。
+### 方式 A：手动上传或同步到 Drive（推荐）
+1. 将 `Sony.zip` 或解压后的 `Sony` 文件夹上传到 `MyDrive/Lowlight/SID_raw/`。
+2. 上传完成后执行：
+   ```bash
+   !mkdir -p /content/drive/MyDrive/Lowlight/SID_raw
+   %cd /content/drive/MyDrive/Lowlight/SID_raw
+   # 若上传的是 ZIP，需要解压时可取消注释下行：
+   # !unzip -q Sony.zip
+   ```
+
+### 方式 B：尝试在 Colab 中直接下载
+> 数据集托管链接偶尔会失效，请根据运行结果决定是否改用方式 A。
 
 ```bash
 !mkdir -p /content/drive/MyDrive/Lowlight/SID_raw
 %cd /content/drive/MyDrive/Lowlight/SID_raw
 
-# 示例：wget 方式
-!wget -O SID_Sony.zip "https://[SID_DATASET_DOWNLOAD_LINK]"
+!wget --no-verbose -O Sony.zip "https://storage.googleapis.com/isl-datasets/SID/Sony.zip" || echo "官方直链下载失败，请改用 gdown 或手动上传。"
+!gdown --id 1P8dkX1bMErx6-8sszv_2i5Vi1Ndo63ok -O Sony.zip || echo "gdown 下载失败，请手动上传。"
 
-# 示例：gdown 方式
-# !gdown --id [FILE_ID] -O SID_Sony.zip
+!unzip -q Sony.zip
+```
 
-!unzip -q SID_Sony.zip
+### 校验 RAW 数据是否就绪
+```python
+from pathlib import Path
+short_dir = Path("/content/drive/MyDrive/Lowlight/SID_raw/Sony/short")
+long_dir = Path("/content/drive/MyDrive/Lowlight/SID_raw/Sony/long")
+
+if short_dir.is_dir() and long_dir.is_dir():
+    short_cnt = len(list(short_dir.glob("*.ARW")))
+    long_cnt = len(list(long_dir.glob("*.ARW")))
+    print(f"short RAW: {short_cnt} 份, long RAW: {long_cnt} 份")
+    if short_cnt == 0 or long_cnt == 0:
+        raise SystemExit("RAW 数量为 0，请确认上传/下载流程。")
+else:
+    raise SystemExit("未检测到 Sony RAW 目录，请检查路径或重新上传。")
 ```
 
 ---
 
-## 第 2 步：克隆主项目与依赖仓库
+## 第 2 步：克隆项目与依赖仓库
 
 ```bash
 %cd /content/drive/MyDrive/Lowlight/SID_experiments
@@ -86,7 +110,7 @@ for p in [
 
 ---
 
-## 第 6 步：生成 manifest 并划分数据集
+## 第 6 步：生成 manifest（固定数据划分）
 
 ```bash
 !python tools/prepare_sid_manifest.py \
@@ -111,15 +135,12 @@ for p in [
 
 ---
 
-## 第 8 步：核对 NAFNet 配置
+## 第 8 步：确认 NAFNet 配置
 
-配置文件：`configs/colab/sid_nafnet_baseline.yml`。默认路径与上述步骤一致，无需改动；如目录不同，请在以下字段同步修改：
+在 `configs/colab/sid_nafnet_baseline.yml` 中确认：
 
-- `datasets.train/val.manifest_path`
-- `datasets.*.io_backend.db_paths`
-- `path` 段（若需自定义输出位置）
-
-确保所有模型共享相同的 manifest 与 LMDB 目录以保证公平对比。
+- `datasets.*.manifest_path` 与 `io_backend.db_paths` 指向上述路径；
+- 如需自定义日志/模型输出，请修改 `path` 段。
 
 ---
 
@@ -130,13 +151,13 @@ for p in [
 !python basicsr/train.py -opt ../configs/colab/sid_nafnet_baseline.yml
 ```
 
-若出现显存不足，可在配置中统一调低 `batch_size_per_gpu` 与 `patch_size`（并在其他模型配置中保持一致）。
+若显存不足，可统一调低 `batch_size_per_gpu` 与 `patch_size`（并在其他模型里保持一致）。
 
 ---
 
-## 第 10 步：监控与评估
+## 第 10 步：监控与测试
 
-### 10.1 TensorBoard 监控
+### 10.1 TensorBoard
 ```python
 %load_ext tensorboard
 TENSORBOARD_LOG = "/content/drive/MyDrive/Lowlight/SID_experiments/Lowlight_Image_Enhancement/experiments"
@@ -144,15 +165,14 @@ tensorboard --logdir ${TENSORBOARD_LOG}
 ```
 
 ### 10.2 测试集评估（可选）
-
-在配置文件中新增 `datasets.test`（结构与 `datasets.val` 相同，指向 `test_*` LMDB），保存后再次执行第 9 步。脚本会按照 `val.metrics` 计算 PSNR、SSIM、LPIPS、ΔE_00、Edge-ΔE_00。
+在配置中新增 `datasets.test` 指向 `test_short.lmdb` / `test_long.lmdb`，保存后重新运行第 9 步即可计算全套指标（PSNR、SSIM、LPIPS、ΔE₀₀、Edge-ΔE₀₀）。
 
 ---
 
-## 第 11 步：收尾与维护
+## 第 11 步：收尾
 
-- **断点续训**：在 YAML 中设置 `path.resume_state` 为最新 `*.state` 文件。
+- **断点续训**：配置 `path.resume_state` 为最新 `*.state` 文件。
 - **释放显存**：`import torch; torch.cuda.empty_cache()`。
-- **备份成果**：模型权重、日志、TensorBoard 事件位于 `experiments/SID_NAFNet_Baseline`（默认名称）。
+- **备份结果**：输出位于 `experiments/SID_NAFNet_Baseline`（默认命名）。
 
-至此，NAFNet Baseline 在独立笔记本中的所有步骤已经完成。***
+完成以上步骤，即可在独立笔记本中完成 NAFNet Baseline 实验。祝实验顺利！***
