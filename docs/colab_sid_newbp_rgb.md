@@ -1,10 +1,10 @@
-# Colab 笔记本：NewBP + NAFNet（RGB-PSF 实验组）
+# Colab 笔记本：NewBP + NAFNet（RGB-PSF）全流程指南
 
-> 本笔记本专注 **RGB-PSF** 变体（NewBP-B）。请确保 Mono-PSF 与 Baseline 模型分开运行，避免超时或冲突。
+> 本指南适用于 **RGB-PSF** 实验（NewBP-B）。按顺序执行，即可在独立 Colab 笔记本中完成全部步骤。
 
 ---
 
-## 第 0 步：挂载 Drive、设定目录（首次运行必做）
+## 第 0 步：挂载 Google Drive 并创建工作区
 
 ```python
 from google.colab import drive
@@ -17,9 +17,29 @@ BASE_DIR = "/content/drive/MyDrive/Lowlight/SID_experiments"
 
 ---
 
-## 第 1 步：克隆仓库（首次运行必做）
+## 第 1 步：下载并解压 SID 数据集
+
+若 Drive 中已有 `SID_raw/Sony/short,long`，可跳过此步。示例命令（需自行替换链接或文件 ID）：
 
 ```bash
+!mkdir -p /content/drive/MyDrive/Lowlight/SID_raw
+%cd /content/drive/MyDrive/Lowlight/SID_raw
+
+# wget 示例
+!wget -O SID_Sony.zip "https://[SID_DATASET_DOWNLOAD_LINK]"
+
+# gdown 示例
+# !gdown --id [FILE_ID] -O SID_Sony.zip
+
+!unzip -q SID_Sony.zip
+```
+
+---
+
+## 第 2 步：克隆主项目与依赖仓库
+
+```bash
+%cd /content/drive/MyDrive/Lowlight/SID_experiments
 !git clone https://github.com/RUA1027/Lowlight_Image_Enhancement.git
 !mkdir -p external
 %cd external
@@ -30,7 +50,7 @@ BASE_DIR = "/content/drive/MyDrive/Lowlight/SID_experiments"
 
 ---
 
-## 第 2 步：安装依赖（首次运行必做）
+## 第 3 步：安装依赖
 
 ```bash
 !pip install -r requirements.txt
@@ -39,7 +59,7 @@ BASE_DIR = "/content/drive/MyDrive/Lowlight/SID_experiments"
 
 ---
 
-## 第 3 步：配置 Python 路径
+## 第 4 步：配置 Python 依赖路径
 
 ```python
 import sys
@@ -54,63 +74,92 @@ for p in [
 
 ---
 
-## 第 4 步：数据准备（若已完成，可跳过）
+## 第 5 步：RAW → 16-bit PNG 转换
 
-- RAW → PNG
-- manifest（固定划分 seed=42）
-- LMDB（train/val/test）
-
-命令见 `docs/colab_sid_unet.md` 第 4 步。默认路径：
-
-```
-PNG       : /content/drive/MyDrive/Lowlight/SID_png/Sony
-manifest  : /content/drive/MyDrive/Lowlight/SID_assets/manifest_sid.json
-LMDB      : /content/drive/MyDrive/Lowlight/SID_lmdb
+```bash
+%cd /content/drive/MyDrive/Lowlight/SID_experiments/Lowlight_Image_Enhancement
+!python tools/convert_sid_raw_to_png.py \
+  --raw-root /content/drive/MyDrive/Lowlight/SID_raw/Sony \
+  --output-root /content/drive/MyDrive/Lowlight/SID_png/Sony \
+  --compress-level 1
 ```
 
 ---
 
-## 第 5 步：检查 RGB-PSF 配置
+## 第 6 步：生成 manifest（确保划分一致）
 
-在 `configs/colab/sid_newbp_rgb.yml` 中重点确认：
+```bash
+!python tools/prepare_sid_manifest.py \
+  --short-root /content/drive/MyDrive/Lowlight/SID_png/Sony/short \
+  --long-root /content/drive/MyDrive/Lowlight/SID_png/Sony/long \
+  --output /content/drive/MyDrive/Lowlight/SID_assets/manifest_sid.json \
+  --seed 42 --val-ratio 0.1 --test-ratio 0.1
+```
+
+---
+
+## 第 7 步：创建 LMDB 数据库
+
+```bash
+!python tools/create_sid_lmdb.py \
+  --manifest /content/drive/MyDrive/Lowlight/SID_assets/manifest_sid.json \
+  --short-root /content/drive/MyDrive/Lowlight/SID_png/Sony/short \
+  --long-root /content/drive/MyDrive/Lowlight/SID_png/Sony/long \
+  --output-root /content/drive/MyDrive/Lowlight/SID_lmdb \
+  --compress-level 1
+```
+
+---
+
+## 第 8 步：检查 RGB-PSF 配置文件
+
+配置文件位于 `configs/colab/sid_newbp_rgb.yml`，默认设置如下：
 
 - `network_g.type: NewBPNAFNet`
-- `train.hybrid_opt.physics.mode: rgb`、`kernel_spec: B2`（深度彩色 PSF）
-- 混合精度 `enable_amp: true` 已开启
-- 数据与日志路径与前述路径一致
+- `train.hybrid_opt.physics.mode: rgb`
+- `physics.kernel_spec: B2`（RGB PSF）
+- `train.enable_amp: true`
 
-如需保持与 Mono-PSF 完全可比，请不要修改损失权重 `w_*` 配置。
+若路径与默认不符，请修改以下字段以匹配当前目录：
+
+- `datasets.train/val.manifest_path`
+- `datasets.*.io_backend.db_paths`
+- （可选）`path` 段中日志、模型输出位置
+
+请确保 Mono 与 RGB 实验共享相同的 manifest/LMDB，以便公平对比。
 
 ---
 
-## 第 6 步：启动 RGB-PSF 训练
+## 第 9 步：启动 RGB-PSF 训练
 
 ```bash
 %cd /content/drive/MyDrive/Lowlight/SID_experiments/Lowlight_Image_Enhancement/NAFNet_base
 !python basicsr/train.py -opt ../configs/colab/sid_newbp_rgb.yml
 ```
 
-> RGB-PSF 计算比 Mono 稍重，建议在训练途中定期保存状态（已默认 `save_checkpoint_freq=5000`）。
+训练过程中会启用混合损失（L1 + 感知 + LPIPS + ΔE_00 + RGB 物理一致性）及 AMP。若显存不足，请同步调低 `batch_size_per_gpu` 与 `patch_size`。
 
 ---
 
-## 第 7 步：监控与验证
+## 第 10 步：监控与指标评估
 
+### 10.1 TensorBoard
 ```python
 %load_ext tensorboard
-LOG_DIR = "/content/drive/MyDrive/Lowlight/SID_experiments/Lowlight_Image_Enhancement/experiments"
-tensorboard --logdir ${LOG_DIR}
+TENSORBOARD_LOG = "/content/drive/MyDrive/Lowlight/SID_experiments/Lowlight_Image_Enhancement/experiments"
+tensorboard --logdir ${TENSORBOARD_LOG}
 ```
 
-需要在测试集上评估时，可在配置新增 `datasets.test` 指向 `test_short.lmdb`/`test_long.lmdb`，然后重新运行 `basicsr/train.py`（会执行验证流程，不会重新训练）。
+### 10.2 测试集评估（可选）
+
+在配置文件中新增 `datasets.test` 节点（结构同 `val`，指向 `test_*` LMDB），然后重新运行第 9 步命令即可对测试集计算全套指标（线性域 PSNR/SSIM、LPIPS、ΔE_00、Edge-ΔE_00）。
 
 ---
 
-## 第 8 步：注意事项
+## 第 11 步：收尾与维护
 
-- **显存管理**：若遇 OOM，请与其它模型一致地调低 `batch_size_per_gpu`、`patch_size`。
-- **恢复训练**：配置 `path.resume_state` 为最新 `*.state` 文件，即可断点续训。
-- **显存释放**：`import torch; torch.cuda.empty_cache()`。
-- **结果整理**：所有模型日志/权重位于统一 `experiments` 目录，便于后续汇总。
+- **断点续训**：设置 `path.resume_state` 为最新 `*.state` 文件即可续训。
+- **显存清理**：`import torch; torch.cuda.empty_cache()`。
+- **成果管理**：训练权重与日志保存在 `experiments/SID_NewBP_RGB`（默认名称），建议及时备份。
 
-完成以上步骤，即可在 RGB-PSF 笔记本中完成 NewBP-B 实验。***
+至此，RGB-PSF 实验已全部完成，可与其他模型结果进行对比分析。***
