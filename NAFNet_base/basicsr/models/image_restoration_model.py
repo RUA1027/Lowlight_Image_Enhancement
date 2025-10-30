@@ -12,6 +12,7 @@ from typing import Optional
 
 import torch
 import torch.nn.functional as F
+from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 
 from basicsr.models.archs import define_network
@@ -99,6 +100,9 @@ class ImageRestorationModel(BaseModel):
                 )
 
             self.cri_hybrid = cri_hybrid_cls(**hybrid_kwargs).to(self.device)
+
+        self.use_amp = bool(train_opt.get('enable_amp', True)) and torch.cuda.is_available()
+        self.scaler = GradScaler(enabled=self.use_amp)
 
         # set up optimizers and schedulers
         self.setup_optimizers()
@@ -240,75 +244,78 @@ class ImageRestorationModel(BaseModel):
         self.lq = self.origin_lq
 
     def optimize_parameters(self, current_iter, tb_logger):
-        self.optimizer_g.zero_grad()
+        self.optimizer_g.zero_grad(set_to_none=True)
 
         if self.opt['train'].get('mixup', False):
             self.mixup_aug()
 
-        preds = self.net_g(self.lq)
-        if not isinstance(preds, list):
-            preds = [preds]
-
-        self.output = preds[-1]
-
-        l_total = 0
         loss_dict = OrderedDict()
-        # pixel loss
-        if self.cri_pix:
-            l_pix = 0.
-            for pred in preds:
-                l_pix += self.cri_pix(pred, self.gt)
 
-            # print('l pix ... ', l_pix)
-            l_total += l_pix
-            loss_dict['l_pix'] = l_pix
+        with autocast(enabled=self.use_amp):
+            preds = self.net_g(self.lq)
+            if not isinstance(preds, list):
+                preds = [preds]
 
-        # perceptual loss
-        if self.cri_perceptual:
-            l_percep, l_style = self.cri_perceptual(self.output, self.gt)
-        #
-            if l_percep is not None:
-                l_total += l_percep
-                loss_dict['l_percep'] = l_percep
-            if l_style is not None:
-                l_total += l_style
-                loss_dict['l_style'] = l_style
+            self.output = preds[-1]
+            l_total = self.output.new_tensor(0.0)
 
-        if self.cri_hybrid is not None:
-            expo_ratio = self.expo_ratio
-            if expo_ratio is None:
-                expo_ratio = torch.ones(
-                    (self.output.size(0), 1, 1, 1),
-                    dtype=self.output.dtype,
-                    device=self.output.device,
+            if self.cri_pix:
+                l_pix = self.output.new_tensor(0.0)
+                for pred in preds:
+                    l_pix = l_pix + self.cri_pix(pred, self.gt)
+                l_total = l_total + l_pix
+                loss_dict['l_pix'] = l_pix
+
+            if self.cri_perceptual:
+                l_percep, l_style = self.cri_perceptual(self.output, self.gt)
+                if l_percep is not None:
+                    l_total = l_total + l_percep
+                    loss_dict['l_percep'] = l_percep
+                if l_style is not None:
+                    l_total = l_total + l_style
+                    loss_dict['l_style'] = l_style
+
+            if self.cri_hybrid is not None:
+                expo_ratio = self.expo_ratio
+                if expo_ratio is None:
+                    expo_ratio = torch.ones(
+                        (self.output.size(0), 1, 1, 1),
+                        dtype=self.output.dtype,
+                        device=self.output.device,
+                    )
+
+                long_raw = self.long_raw if self.long_raw is not None else self.gt
+                short_raw = self.short_raw if self.short_raw is not None else self.lq
+                short_srgb = self.short_obs if self.short_obs is not None else None
+
+                hybrid_total, hybrid_logs = self.cri_hybrid(
+                    Bhat_raw=self.output,
+                    B_raw=long_raw,
+                    A_raw=short_raw,
+                    expo_ratio=expo_ratio,
+                    Bhat_srgb01=self.output.clamp(0.0, 1.0),
+                    B_srgb01=self.gt.clamp(0.0, 1.0),
+                    A_srgb01=short_srgb.clamp(0.0, 1.0) if short_srgb is not None else None,
                 )
+                l_total = l_total + hybrid_total
+                for name, value in hybrid_logs.items():
+                    loss_dict[f'hybrid_{name}'] = value
 
-            long_raw = self.long_raw if self.long_raw is not None else self.gt
-            short_raw = self.short_raw if self.short_raw is not None else self.lq
-            short_srgb = self.short_obs if self.short_obs is not None else None
+            l_total = l_total + 0.0 * sum(p.sum() for p in self.net_g.parameters())
 
-            hybrid_total, hybrid_logs = self.cri_hybrid(
-                Bhat_raw=self.output,
-                B_raw=long_raw,
-                A_raw=short_raw,
-                expo_ratio=expo_ratio,
-                Bhat_srgb01=self.output.clamp(0.0, 1.0),
-                B_srgb01=self.gt.clamp(0.0, 1.0),
-                A_srgb01=short_srgb.clamp(0.0, 1.0) if short_srgb is not None else None,
-            )
-            l_total += hybrid_total
-            for name, value in hybrid_logs.items():
-                loss_dict[f'hybrid_{name}'] = value
-
-
-        l_total = l_total + 0. * sum(p.sum() for p in self.net_g.parameters())
-
-        l_total.backward()
         use_grad_clip = self.opt['train'].get('use_grad_clip', True)
-        if use_grad_clip:
-            torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 0.01)
-        self.optimizer_g.step()
-
+        if self.use_amp:
+            self.scaler.scale(l_total).backward()
+            if use_grad_clip:
+                self.scaler.unscale_(self.optimizer_g)
+                torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 0.01)
+            self.scaler.step(self.optimizer_g)
+            self.scaler.update()
+        else:
+            l_total.backward()
+            if use_grad_clip:
+                torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 0.01)
+            self.optimizer_g.step()
 
         self.log_dict = self.reduce_loss_dict(loss_dict)
 
