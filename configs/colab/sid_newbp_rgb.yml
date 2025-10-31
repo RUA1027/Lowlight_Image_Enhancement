@@ -9,12 +9,12 @@ datasets:
     type: SonySIDLMDBDataset
     phase: train
     manifest_path: /content/drive/MyDrive/Lowlight/SID_assets/manifest_sid.json
-  subset: train
-  patch_size: 384
-  samples_per_pair: 4
-  random_crop: true
-  batch_size_per_gpu: 2
-  num_worker_per_gpu: 4
+    subset: train
+    patch_size: 384
+    samples_per_pair: 4
+    random_crop: true
+    batch_size_per_gpu: 2
+    num_worker_per_gpu: 4
     pin_memory: true
     prefetch_mode: cuda
     io_backend:
@@ -86,9 +86,9 @@ train:
     w_ssim: 0.0
     w_phys: 0.1
     use_deltaE: true
-  use_ssim: false
-  use_lpips: false
-  use_phys: true
+    use_ssim: false
+    use_lpips: false
+    use_phys: true
     use_uncertainty: false
     physics:
       mode: rgb
