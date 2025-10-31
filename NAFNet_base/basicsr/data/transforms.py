@@ -6,7 +6,6 @@
 # ------------------------------------------------------------------------
 import cv2
 import random
-from cv2 import rotate
 import numpy as np
 
 
@@ -183,21 +182,21 @@ def augment(imgs, hflip=True, rotation=True, flows=None, return_status=False, vf
 
     def _augment(img):
         if hflip:  # horizontal
-            cv2.flip(img, 1, img)
+            img = cv2.flip(img, 1)
             if img.shape[2] == 6:
                 img = img[:,:,[3,4,5,0,1,2]].copy() # swap left/right
         if vflip:  # vertical
-            cv2.flip(img, 0, img)
+            img = cv2.flip(img, 0)
         if rot90:
             img = img.transpose(1, 0, 2)
         return img
 
     def _augment_flow(flow):
         if hflip:  # horizontal
-            cv2.flip(flow, 1, flow)
+            flow = cv2.flip(flow, 1)
             flow[:, :, 0] *= -1
         if vflip:  # vertical
-            cv2.flip(flow, 0, flow)
+            flow = cv2.flip(flow, 0)
             flow[:, :, 1] *= -1
         if rot90:
             flow = flow.transpose(1, 0, 2)
