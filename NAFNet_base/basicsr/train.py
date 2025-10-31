@@ -64,6 +64,17 @@ def parse_options(is_train=True):
 
     opt['rank'], opt['world_size'] = get_dist_info()
 
+    # number of GPUs visible to this process (used by dataloader construction)
+    # In non-distributed mode, use all visible GPUs; in distributed, one GPU per process.
+    if opt['dist']:
+        opt['num_gpu'] = 1
+    else:
+        try:
+            visible = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        except Exception:
+            visible = 0
+        opt['num_gpu'] = max(1, int(visible))
+
     # random seed
     seed = opt.get('manual_seed')
     if seed is None:
@@ -105,6 +116,9 @@ def init_loggers(opt):
 def create_train_val_dataloader(opt, logger):
     # create train and val dataloaders
     train_loader, val_loader = None, None
+    train_sampler = None
+    total_epochs = 0
+    total_iters = 0
     for phase, dataset_opt in opt['datasets'].items():
         if phase == 'train':
             dataset_enlarge_ratio = dataset_opt.get('dataset_enlarge_ratio', 1)
@@ -178,7 +192,7 @@ def main():
         device_id = torch.cuda.current_device()
         resume_state = torch.load(
             opt['path']['resume_state'],
-            map_location=lambda storage, loc: storage.cuda(device_id))
+            map_location=lambda storage, loc: storage.cuda(device_id))  # type: ignore[attr-defined]
     else:
         resume_state = None
 
@@ -235,7 +249,8 @@ def main():
     # for epoch in range(start_epoch, total_epochs + 1):
     epoch = start_epoch
     while current_iter <= total_iters:
-        train_sampler.set_epoch(epoch)
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
         prefetcher.reset()
         train_data = prefetcher.next()
 
