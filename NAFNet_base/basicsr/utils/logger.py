@@ -85,6 +85,7 @@ class MessageLogger():
                     self.tb_logger.add_scalar(f'metrics/{k}', v, normed_step)
                 else:
                     # assert 1 == 0
+                    pass
                 # else:
                 #     self.tb_logger.add_scalar(k, v, current_iter)
         self.logger.info(message)
