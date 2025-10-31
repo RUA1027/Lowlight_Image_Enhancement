@@ -72,11 +72,26 @@ else:
 
 ---
 
-## 第 3 步：安装依赖
+## 第 3 步：安装依赖（务必包含 torchmetrics）
 
 ```bash
 !pip install -r requirements.txt
-!pip install rawpy kornia lpips lmdb tqdm opencv-python-headless
+# 保险起见，单独补充关键依赖，避免 Colab 预装版本不一致导致缺失
+!pip install --upgrade rawpy kornia lpips lmdb tqdm opencv-python-headless torchmetrics
+```
+
+### 依赖自检（推荐）
+
+```python
+import importlib, sys
+mods = ['torch', 'torchvision', 'kornia', 'lpips', 'lmdb', 'torchmetrics']
+for m in mods:
+  try:
+    importlib.import_module(m)
+    print(f'[OK] {m}')
+  except Exception as e:
+    print(f'[X] {m}:', e)
+    raise SystemExit('依赖未安装完整，请先修复后再继续。')
 ```
 
 ---
@@ -156,6 +171,7 @@ for p in [
 ## 第 10 步：监控与测试评估
 
 ### 10.1 TensorBoard
+
 ```python
 %load_ext tensorboard
 TENSORBOARD_LOG = "/content/drive/MyDrive/Lowlight/SID_experiments/Lowlight_Image_Enhancement/experiments"
@@ -163,6 +179,7 @@ tensorboard --logdir ${TENSORBOARD_LOG}
 ```
 
 ### 10.2 测试集评估（可选）
+
 在配置文件新增 `datasets.test` 指向 `test_short.lmdb` / `test_long.lmdb` 后，重新执行第 9 步即可评估 PSNR、SSIM、LPIPS、ΔE₀₀、Edge-ΔE₀₀。
 
 ---
