@@ -18,10 +18,16 @@ arch_filenames = [
     if v.endswith('_arch.py')
 ]
 # import all the arch modules
-_arch_modules = [
-    importlib.import_module(f'basicsr.models.archs.{file_name}')
-    for file_name in arch_filenames
-]
+_arch_modules = []
+for file_name in arch_filenames:
+    try:
+        _arch_modules.append(
+            importlib.import_module(f'basicsr.models.archs.{file_name}')
+        )
+    except ImportError:
+        # Optional dependency missing for this arch (e.g., SwinIR).
+        # Skip importing so that other networks can still work.
+        continue
 
 
 def dynamic_instantiation(modules, cls_type, opt):
@@ -37,6 +43,7 @@ def dynamic_instantiation(modules, cls_type, opt):
         class: Instantiated class.
     """
 
+    cls_ = None
     for module in modules:
         cls_ = getattr(module, cls_type, None)
         if cls_ is not None:
