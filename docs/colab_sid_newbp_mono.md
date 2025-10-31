@@ -152,6 +152,9 @@ for p in [
 
 配置文件：`configs/colab/sid_newbp_mono.yml`。确保以下路径与前述步骤一致，如需自定义日志/模型目录可在 `path` 段修改：
 
+- `network_g.type: NewBPNAFNet`
+- `network_g.kernel_type: panchromatic`
+- `train.hybrid_opt.physics.mode: mono`
 - `datasets.*.manifest_path`
 - `datasets.*.io_backend.db_paths`
 

@@ -48,7 +48,7 @@ datasets:
 network_g:
   type: NewBPNAFNet
   in_channels: 3
-  kernel_type: trichromatic
+  kernel_type: rgb
   kernel_spec: B2
   nafnet_params:
     img_channel: 3

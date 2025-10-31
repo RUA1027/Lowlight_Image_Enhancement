@@ -1,0 +1,113 @@
+# Tiny debug configuration for NewBP RGB-PSF variant on Sony SID.
+# Replace the placeholder paths before running.
+
+name: SID_NewBP_RGB_Debug
+model_type: ImageRestorationModel
+scale: 1
+manual_seed: 42
+
+datasets:
+  train:
+    name: SID-train-debug
+    type: SonySIDLMDBDataset
+    phase: train
+    manifest_path: /path/to/manifest_sid.json  # TODO: replace
+    subset: train_small
+    patch_size: 128
+    samples_per_pair: 1
+    random_crop: true
+    batch_size_per_gpu: 1
+    num_worker_per_gpu: 0
+    pin_memory: false
+    prefetch_mode: null
+    io_backend:
+      type: lmdb
+      db_paths:
+        - /path/to/train_short_debug.lmdb  # TODO: replace
+        - /path/to/train_long_debug.lmdb   # TODO: replace
+      client_keys:
+        - short
+        - long
+  val:
+    name: SID-val-debug
+    type: SonySIDLMDBDataset
+    phase: val
+    manifest_path: /path/to/manifest_sid.json  # TODO: replace
+    subset: val_small
+    random_crop: false
+    samples_per_pair: 1
+    batch_size_per_gpu: 1
+    num_worker_per_gpu: 0
+    pin_memory: false
+    io_backend:
+      type: lmdb
+      db_paths:
+        - /path/to/val_short_debug.lmdb  # TODO: replace
+        - /path/to/val_long_debug.lmdb   # TODO: replace
+      client_keys:
+        - short
+        - long
+
+network_g:
+  type: NewBPNAFNet
+  in_channels: 3
+  kernel_type: rgb
+  kernel_spec: B2
+  nafnet_params:
+    img_channel: 3
+    width: 16
+    enc_blk_nums: [1, 1]
+    middle_blk_num: 1
+    dec_blk_nums: [1, 1]
+
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+
+train:
+  total_iter: 2000
+  warmup_iter: -1
+  enable_amp: false
+  optim_g:
+    type: AdamW
+    lr: 1.0e-3
+    betas: [0.9, 0.999]
+    weight_decay: 0.0
+  scheduler:
+    type: MultiStepLR
+    milestones: [1000, 1500]
+    gamma: 0.5
+  pixel_opt: ~
+  hybrid_opt:
+    type: HybridLossPlus
+    device: auto
+    w_l1_raw: 1.0
+    w_perc: 0.0
+    w_lpips: 0.0
+    w_deltaE: 0.0
+    w_ssim: 0.0
+    w_phys: 0.0
+    use_deltaE: false
+    use_ssim: false
+    use_lpips: false
+    use_phys: false
+    use_uncertainty: false
+  use_grad_clip: false
+
+val:
+  val_freq: 200
+  save_img: false
+  use_image: false
+  metrics:
+    psnr_linear:
+      type: linear_psnr
+      data_range: 1.0
+
+logger:
+  print_freq: 10
+  save_checkpoint_freq: 200
+  use_tb_logger: false
+
+dist_params:
+  backend: nccl

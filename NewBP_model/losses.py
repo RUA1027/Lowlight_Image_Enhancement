@@ -213,6 +213,8 @@ class HybridLossPlus(nn.Module):
         physics_psf_module: Optional[nn.Module] = None,
     ):
         super().__init__()
+        self.register_buffer('_zero', torch.tensor(0.0), persistent=False)
+        self._zero: torch.Tensor
         self.l1_raw = nn.L1Loss().to(device)
         self.perc = PerceptualLoss(device=device)
         self.deltaE = DeltaE00Loss() if use_deltaE else None
@@ -245,9 +247,20 @@ class HybridLossPlus(nn.Module):
         else:
             self.w = dict(l1=w_l1_raw, perc=w_perc, lpips=w_lpips, de=w_deltaE, ssim=w_ssim, phys=w_phys)
 
+    @staticmethod
+    def _ensure_finite(name: str, value: torch.Tensor):
+        if not torch.isfinite(value).all():
+            finite_mask = torch.isfinite(value)
+            finite_vals = value[finite_mask]
+            stats = ""
+            if finite_vals.numel() > 0:
+                stats = f" (finite min={finite_vals.min().item():.4e}, max={finite_vals.max().item():.4e})"
+            raise RuntimeError(f"HybridLossPlus detected non-finite values in term '{name}'.{stats}")
+
     def _weighted(self, name: str, val: Optional[torch.Tensor]):
         if val is None:
-            return 0.0, torch.tensor(0.0)
+            zero = self._zero.clone()
+            return zero, zero.detach()
         if self.use_uncertainty:
             s = self.log_sigma[name]
             return (val * torch.exp(-2 * s) + s), val.detach()
@@ -269,36 +282,43 @@ class HybridLossPlus(nn.Module):
         L_total = 0.0
 
         L_l1 = self.l1_raw(Bhat_raw, B_raw)
+        self._ensure_finite('L1_raw', L_l1)
         Lw, logs['L1_raw'] = self._weighted('l1', L_l1)
         L_total += Lw
 
         L_p = self.perc(Bhat_srgb01, B_srgb01)
+        self._ensure_finite('Perc', L_p)
         Lw, logs['Perc'] = self._weighted('perc', L_p)
         L_total += Lw
 
         if self.lpips is not None:
             L_lp = self.lpips(Bhat_srgb01, B_srgb01).mean()
+            self._ensure_finite('LPIPS', L_lp)
             Lw, logs['LPIPS'] = self._weighted('lpips', L_lp)
             L_total += Lw
 
         if self.deltaE is not None:
             L_de = self.deltaE(Bhat_srgb01, B_srgb01)
+            self._ensure_finite('DeltaE', L_de)
             Lw, logs['DeltaE'] = self._weighted('de', L_de)
             L_total += Lw
 
         if self.ssim is not None:
             L_ss = self.ssim(Bhat_srgb01, B_srgb01)
+            self._ensure_finite('SSIM', L_ss)
             Lw, logs['SSIM'] = self._weighted('ssim', L_ss)
             L_total += Lw
 
         if self.phys is not None:
             L_ph = self.phys(Bhat_raw, A_raw, expo_ratio)
+            self._ensure_finite('Phys_raw', L_ph)
             Lw, logs['Phys'] = self._weighted('phys', L_ph)
             L_total += Lw
         elif self.phys_srgb is not None and A_srgb01 is not None:
             L_phs = self.phys_srgb(Bhat_srgb01, A_srgb01, expo_ratio)
+            self._ensure_finite('Phys_srgb', L_phs)
             Lw, logs['Phys'] = self._weighted('phys', L_phs)
             L_total += Lw
 
-        logs['Total'] = torch.as_tensor(L_total).detach()
+        logs['Total'] = L_total.detach()
         return L_total, logs

@@ -1,0 +1,20 @@
+[
+  {
+    "pair_id": "debugpair1_00",
+    "subset": "train_small",
+    "short_key": "debugpair1_00_0.1s.png",
+    "long_key": "debugpair1_00_1s.png",
+    "short_exposure": 0.1,
+    "long_exposure": 1.0,
+    "exposure_ratio": 10.0
+  },
+  {
+    "pair_id": "debugpair2_00",
+    "subset": "val_small",
+    "short_key": "debugpair2_00_0.1s.png",
+    "long_key": "debugpair2_00_1s.png",
+    "short_exposure": 0.1,
+    "long_exposure": 1.0,
+    "exposure_ratio": 10.0
+  }
+]

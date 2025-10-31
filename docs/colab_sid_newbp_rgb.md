@@ -138,6 +138,7 @@ for p in [
 `configs/colab/sid_newbp_rgb.yml` 默认启用：
 
 - `network_g.type: NewBPNAFNet`
+- `network_g.kernel_type: rgb`
 - `train.hybrid_opt.physics.mode: rgb`
 - `physics.kernel_spec: B2`
 - `train.enable_amp: true`
