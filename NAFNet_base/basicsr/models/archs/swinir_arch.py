@@ -27,13 +27,21 @@ def _prepare_import_path() -> None:
 
 _prepare_import_path()
 
+'''
 try:
     from models.swinir import SwinIR  # type: ignore
 except ImportError as exc:  # pragma: no cover - optional dependency
     raise ImportError(
         "Unable to import SwinIR. Please clone the official repository into 'external/SwinIR' or install it as a package."
     ) from exc
+'''
 
+try:
+    from models.swinir import SwinIR  # type: ignore
+except ImportError as exc:  # pragma: no cover - optional dependency
+    raise ImportError(
+        "Unable to import SwinIR. Please clone the official repository into 'external/SwinIR' or install it as a package."
+    ) from exc
 
 def SwinIRRestoration(**kwargs):
     return SwinIR(**kwargs)
