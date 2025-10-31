@@ -1,4 +1,9 @@
+from __future__ import annotations
 #!/usr/bin/env python
+# 添加项目根目录到 sys.path，确保可以导入 NewBP_model
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 """
 Rapid overfit/debug harness for the NewBP + NAFNet generator.
 
@@ -14,7 +19,7 @@ Switch to HybridLossPlus (with physics PSF) after the basic L1 check passes:
     python tools/debug_overfit.py --loss hybrid --enable-phys --device cuda
 """
 
-from __future__ import annotations
+
 
 import argparse
 import math
@@ -25,7 +30,6 @@ from torch import nn, optim
 
 from NewBP_model.newbp_net_arch import create_newbp_net, create_crosstalk_psf
 from NewBP_model.losses import HybridLossPlus
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Single-batch overfit harness for NewBP-NAFNet.")
