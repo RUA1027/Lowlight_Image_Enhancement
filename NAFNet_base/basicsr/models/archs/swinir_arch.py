@@ -38,7 +38,8 @@ except ImportError as exc:  # pragma: no cover - optional dependency
 
 try:
     # from models.swinir import SwinIR  # type: ignore
-    from models.network_swinir import SwinIR  # type: ignore
+        from models.network_swinir import SwinIR  # type: ignore
+        # from network_swinir import SwinIR  # type: ignore
 except ImportError as exc:  # pragma: no cover - optional dependency
     raise ImportError(
         "Unable to import SwinIR. Please clone the official repository into 'external/SwinIR' or install it as a package."
