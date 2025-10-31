@@ -15,7 +15,16 @@ from os import path as osp
 
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+# Ensure Python can import the local 'basicsr' package regardless of where the script is launched from.
+# 1) Add the parent directory (NAFNet_base) so that 'import basicsr' resolves to this folder.
+_here = os.path.abspath(os.path.dirname(__file__))
+_pkg_root = os.path.abspath(os.path.join(_here, '..'))  # NAFNet_base
+if _pkg_root not in sys.path:
+    sys.path.insert(0, _pkg_root)
+# 2) Optionally add the repository root to support other relative imports if needed.
+_repo_root = os.path.abspath(os.path.join(_pkg_root, '..'))  # project root
+if _repo_root not in sys.path:
+    sys.path.append(_repo_root)
 from basicsr.utils import MessageLogger, check_resume, get_env_info, get_root_logger, get_time_str, init_tb_logger, init_wandb_logger, make_exp_dirs, mkdir_and_rename, set_random_seed
 from basicsr.utils.dist_util import get_dist_info, init_dist
 from basicsr.utils.options import dict2str, parse
