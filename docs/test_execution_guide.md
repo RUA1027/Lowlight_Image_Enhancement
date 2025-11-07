@@ -47,6 +47,25 @@ PY
   foreach ($p in $paths) { if (-not ($env:PYTHONPATH -like "*$p*")) { $env:PYTHONPATH = "$p;$env:PYTHONPATH" } }
   ```
 
+#### 1.1.1 占位模式（仅用于调试）
+
+当原始 PNG 缺失/损坏时，可启用占位模式确保 LMDB 可生成、测试可执行：
+
+```powershell
+python NAFNet_base\tools\create_sid_lmdb.py `
+  --manifest data/debug_sid/manifest_sid_debug.json `
+  --short-root data/debug_sid/short `
+  --long-root  data/debug_sid/long `
+  --output-root data/debug_sid `
+  --compress-level 0 `
+  --placeholder-on-corrupt
+```
+
+说明与建议：
+
+- 占位图默认 16-bit（OpenCV）/回退 8-bit（PIL），仅为打通链路；真实训练前请使用有效 PNG 重新构建 LMDB（不要带该参数）。
+- lmdb_util 会对坏图自动跳过并估算合适的 map_size；若全部损坏会抛出清晰错误。
+
 ### 1.2 运行测试
 
 ```powershell
@@ -144,6 +163,14 @@ pytest standard_tests/test_lpips_wrapper.py::test_amp_autocast_stability --disab
 pytest standard_tests/test_lpips_wrapper.py::test_cpu_cuda_parity --disable-warnings
 pytest core_tests/test_integration_forward_amp.py --disable-warnings
 ```
+
+补充（CPU 快速闭环）：
+
+```powershell
+python NAFNet_base\basicsr\train.py -opt configs\debug\sid_newbp_mono_debug.yml
+```
+
+该配置已将后端切换为 gloo、num_gpu=0 时走 CPU 路径，适合本地最小闭环验证。
 
 
 ### 2.5 完整回归（可选）

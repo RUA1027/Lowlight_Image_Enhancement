@@ -67,13 +67,20 @@ def parse_options(is_train=True):
     # number of GPUs visible to this process (used by dataloader construction)
     # In non-distributed mode, use all visible GPUs; in distributed, one GPU per process.
     if opt['dist']:
-        opt['num_gpu'] = 1
+        # In distributed mode each process handles exactly one GPU; if CUDA not available, fall back to CPU with 0.
+        if torch.cuda.is_available():
+            opt['num_gpu'] = 1
+        else:
+            opt['num_gpu'] = 0
     else:
+        # Non-distributed: reflect actual visible GPU count; allow 0 for pure CPU so downstream device selection uses CPU.
         try:
             visible = torch.cuda.device_count() if torch.cuda.is_available() else 0
         except Exception:
             visible = 0
-        opt['num_gpu'] = max(1, int(visible))
+        opt['num_gpu'] = int(visible)
+        if opt['num_gpu'] == 0:
+            print('CUDA not available: running in pure CPU mode (num_gpu=0).', flush=True)
 
     # random seed
     seed = opt.get('manual_seed')

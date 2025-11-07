@@ -136,6 +136,26 @@ PY
 
   若执行脚本时报 `ModuleNotFoundError: basicsr` 或 `NewBP_model`，请先执行一次路径引导脚本（已集成在工具中）或确认在仓库根目录激活虚拟环境后再运行；新版脚本已自动注入 `NAFNet_base/basicsr` 与项目根到 `sys.path`。
 
+#### A3.2 占位模式与 16-bit 提升（可选/调试友好）
+
+- 作用：当源 PNG 缺失或损坏时，自动生成可用占位图，保证 LMDB 构建与后续最小闭环不被阻塞；占位默认使用 16-bit RGB 以避免 uint8→uint16 提升带来的量化影响。
+- 用法（PowerShell）：
+
+  ```powershell
+  python NAFNet_base\tools\create_sid_lmdb.py `
+    --manifest data/debug_sid/manifest_sid_debug.json `
+    --short-root data/debug_sid/short `
+    --long-root  data/debug_sid/long `
+    --output-root data/debug_sid `
+    --compress-level 0 `
+    --placeholder-on-corrupt
+  ```
+
+- 注意事项：
+  - 占位仅用于打通调试路径；准备真实训练集时请去掉该参数并重新生成 LMDB。
+  - 若本机无 OpenCV，将回退为 PIL 写入（8-bit），此时仍可用于冒烟；建议在正式数据准备时安装 OpenCV 并生成 16-bit PNG。
+  - 估算 LMDB map_size 时脚本会跳过坏图，取首个可用样本；如全部损坏，会明确报错并退出。
+
 ### A3.1 数据链路快速检查
 
 ```powershell
@@ -212,6 +232,14 @@ python NAFNet_base\tools\create_sid_lmdb.py `
 # 4) 用例冒烟（入口/配置正确）
 python -m pytest tests/test_data_pipeline_and_training.py -k smoke --maxfail=1 --disable-warnings
 ```
+
+补充：你也可以直接运行一次极短训练来确认 end-to-end 可用（已内置 CPU 配置与 gloo 后端）：
+
+```powershell
+python NAFNet_base\basicsr\train.py -opt configs\debug\sid_newbp_mono_debug.yml
+```
+
+通过标准：控制台打印 20 iter 内的 loss，随后完成一次验证并退出；不会触发 CUDA 相关错误。
 
 全部成功后再进入阶段 B 放大到 GPU。
 

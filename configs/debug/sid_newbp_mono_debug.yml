@@ -11,12 +11,12 @@ datasets:
     name: SID-train-debug
     type: SonySIDLMDBDataset
     phase: train
-    manifest_path: /path/to/manifest_sid.json  # TODO: replace
+    manifest_path: data/debug_sid/manifest_sid_debug.json
     subset: train_small
     # For tiny synthetic debug assets (64x64) reduce patch_size accordingly
     patch_size: 64
     samples_per_pair: 1
-    random_crop: true
+    random_crop: false
     batch_size_per_gpu: 1
     num_worker_per_gpu: 0
     pin_memory: false
@@ -24,8 +24,8 @@ datasets:
     io_backend:
       type: lmdb
       db_paths:
-        - /path/to/train_short_debug.lmdb  # TODO: replace
-        - /path/to/train_long_debug.lmdb   # TODO: replace
+        - data/debug_sid/train_small_short.lmdb
+        - data/debug_sid/train_small_long.lmdb
       client_keys:
         - short
         - long
@@ -33,7 +33,7 @@ datasets:
     name: SID-val-debug
     type: SonySIDLMDBDataset
     phase: val
-    manifest_path: /path/to/manifest_sid.json  # TODO: replace
+    manifest_path: data/debug_sid/manifest_sid_debug.json
     subset: val_small
     patch_size: 64
     random_crop: false
@@ -44,8 +44,8 @@ datasets:
     io_backend:
       type: lmdb
       db_paths:
-        - /path/to/val_short_debug.lmdb  # TODO: replace
-        - /path/to/val_long_debug.lmdb   # TODO: replace
+        - data/debug_sid/val_small_short.lmdb
+        - data/debug_sid/val_small_long.lmdb
       client_keys:
         - short
         - long
@@ -68,7 +68,7 @@ path:
   resume_state: ~
 
 train:
-  total_iter: 2000
+  total_iter: 20
   warmup_iter: -1
   enable_amp: false
   optim_g:
@@ -98,7 +98,7 @@ train:
   use_grad_clip: false
 
 val:
-  val_freq: 200
+  val_freq: 20
   save_img: false
   use_image: false
   metrics:
@@ -107,9 +107,9 @@ val:
       data_range: 1.0
 
 logger:
-  print_freq: 10
-  save_checkpoint_freq: 200
+  print_freq: 5
+  save_checkpoint_freq: 1000
   use_tb_logger: false
 
 dist_params:
-  backend: nccl
+  backend: gloo
