@@ -12,7 +12,6 @@ from typing import Optional
 
 import torch
 import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 
 from basicsr.models.archs import define_network
@@ -101,6 +100,8 @@ class ImageRestorationModel(BaseModel):
 
             self.cri_hybrid = cri_hybrid_cls(**hybrid_kwargs).to(self.device)
 
+        # AMP setup (legacy cuda.amp; acceptable deprecation warning; simpler and stable for tests)
+        from torch.cuda.amp import GradScaler  # type: ignore
         self.use_amp = bool(train_opt.get('enable_amp', True)) and torch.cuda.is_available()
         self.scaler = GradScaler(enabled=self.use_amp)
 
@@ -251,6 +252,7 @@ class ImageRestorationModel(BaseModel):
 
         loss_dict = OrderedDict()
 
+        from torch.cuda.amp import autocast  # local import to avoid confusion with new API
         with autocast(enabled=self.use_amp):
             preds = self.net_g(self.lq)
             if not isinstance(preds, list):

@@ -1,1 +1,1 @@
-debugpair1_00_0.1s.png.png (64,64,3) 1
+debugpair1_00_0.1s.png.png (64,64,3) 0
