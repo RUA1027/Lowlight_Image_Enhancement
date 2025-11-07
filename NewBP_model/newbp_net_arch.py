@@ -4,11 +4,19 @@ import logging
 
 import torch.nn as nn
 
-NAFNET_ROOT = os.path.join(os.path.dirname(__file__), 'NAFNet')
-if NAFNET_ROOT not in sys.path:
-    sys.path.insert(0, NAFNET_ROOT)
+# Ensure we can import the in-repo BasicSR under NAFNet_base/basicsr
+try:
+    from basicsr.models.archs.NAFNet_arch import NAFNet  # type: ignore
+except ModuleNotFoundError:
+    _here = os.path.abspath(os.path.dirname(__file__))
+    _repo_root = os.path.abspath(os.path.join(_here, '..'))
+    _nafnet_base = os.path.join(_repo_root, 'NAFNet_base')
+    # Prefer adding the NAFNet_base folder so that "import basicsr" resolves as a package
+    for p in (_nafnet_base, os.path.join(_nafnet_base, 'basicsr'), _repo_root):
+        if p not in sys.path and os.path.isdir(p):
+            sys.path.insert(0, p)
+    from basicsr.models.archs.NAFNet_arch import NAFNet  # type: ignore
 
-from basicsr.models.archs.NAFNet_arch import NAFNet  # pyright: ignore[reportMissingImports]
 from .newbp_layer import NewBPLayer, CrosstalkPSF, build_psf_kernels  # 使用相对导入
 
 

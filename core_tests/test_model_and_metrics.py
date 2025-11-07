@@ -18,9 +18,33 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(
 
 from NewBP_model.newbp_net_arch import create_newbp_net, create_crosstalk_psf
 from NewBP_model.losses import HybridLoss, HybridLossPlus
-from metrics.psnr import calculate_psnr
-from metrics.ssim import calculate_ssim
-from metrics.lpips_metric import LPIPSEvaluator
+
+# Robust import of local metrics to avoid collisions with third-party 'metrics' modules
+import importlib.util
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[1]
+
+def _import_from(path: Path, module_name: str):
+    spec = importlib.util.spec_from_file_location(module_name, str(path))
+    assert spec and spec.loader, f"Failed to create spec for {path}"
+    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    import sys as _sys
+    _sys.modules[module_name] = mod
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+try:
+    from metrics.psnr import calculate_psnr  # type: ignore
+    from metrics.ssim import calculate_ssim  # type: ignore
+    from metrics.lpips_metric import LPIPSEvaluator  # type: ignore
+except Exception:
+    psnr_mod = _import_from(_ROOT / "metrics" / "psnr.py", "project_metrics_psnr")
+    ssim_mod = _import_from(_ROOT / "metrics" / "ssim.py", "project_metrics_ssim")
+    lpips_mod = _import_from(_ROOT / "metrics" / "lpips_metric.py", "project_metrics_lpips")
+    calculate_psnr = psnr_mod.calculate_psnr  # type: ignore[attr-defined]
+    calculate_ssim = ssim_mod.calculate_ssim  # type: ignore[attr-defined]
+    LPIPSEvaluator = getattr(lpips_mod, "LPIPSEvaluator")  # type: ignore[attr-defined]
 
 # 1. 神经网络模型前向推理
 @pytest.mark.parametrize("batch_size,channels,height,width", [(2, 3, 128, 128)])
