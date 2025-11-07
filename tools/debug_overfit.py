@@ -3,7 +3,20 @@ from __future__ import annotations
 # 添加项目根目录到 sys.path，确保可以导入 NewBP_model
 import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from pathlib import Path
+
+# ----- Robust path bootstrap (project root + NAFNet_base/basicsr + NewBP_model) -----
+_THIS = Path(__file__).resolve()
+_ROOT = _THIS.parents[1]
+_CANDIDATES = [
+    _ROOT,
+    _ROOT / "NAFNet_base",  # include parent so `import basicsr` resolves
+    _ROOT / "NewBP_model",
+]
+for p in _CANDIDATES:
+    sp = str(p)
+    if sp not in sys.path:
+        sys.path.insert(0, sp)
 """
 Rapid overfit/debug harness for the NewBP + NAFNet generator.
 
@@ -28,8 +41,13 @@ from typing import Tuple
 import torch
 from torch import nn, optim
 
-from NewBP_model.newbp_net_arch import create_newbp_net, create_crosstalk_psf
-from NewBP_model.losses import HybridLossPlus
+try:
+    from NewBP_model.newbp_net_arch import create_newbp_net, create_crosstalk_psf  # type: ignore
+    from NewBP_model.losses import HybridLossPlus  # type: ignore
+except ModuleNotFoundError as e:
+    raise ModuleNotFoundError(
+        f"无法导入 NewBP_model 或 basicsr: {e}. 请确认在仓库根目录执行，已安装依赖。"
+    )
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Single-batch overfit harness for NewBP-NAFNet.")

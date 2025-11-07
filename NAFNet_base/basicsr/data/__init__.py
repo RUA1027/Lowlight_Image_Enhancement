@@ -100,7 +100,8 @@ def create_dataloader(dataset,
             num_workers=num_workers,
             sampler=sampler,
             drop_last=True,
-            persistent_workers=True
+            # 仅在 num_workers>0 时启用 persistent_workers，避免 PyTorch 抛出异常
+            persistent_workers=(num_workers > 0)
         )
         if sampler is None:
             dataloader_args['shuffle'] = True

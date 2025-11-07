@@ -8,7 +8,67 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List
 
+import sys
+from pathlib import Path
+
+# Ensure project paths are available when running from tools/ subdir
+_THIS = Path(__file__).resolve()
+_NAFNET_BASE = _THIS.parents[1]
+_PROJECT_ROOT = _NAFNET_BASE.parent
+for p in (_PROJECT_ROOT, _NAFNET_BASE, _NAFNET_BASE / "basicsr"):
+    sp = str(p)
+    if sp not in sys.path:
+        sys.path.insert(0, sp)
+
 from basicsr.utils.lmdb_util import make_lmdb_from_imgs  # type: ignore
+import numpy as np
+from PIL import Image
+try:
+    import cv2  # type: ignore
+    _HAS_CV2 = True
+except Exception:
+    cv2 = None  # type: ignore
+    _HAS_CV2 = False
+
+
+def _ensure_valid_pngs(root: Path, keys: List[str], *, placeholder_on_corrupt: bool) -> None:
+    """Ensure each key path under root is a loadable PNG; optionally create placeholders when corrupt/missing.
+
+    Args:
+        root: Directory containing PNG files referenced by keys.
+        keys: File names (relative, no extra path components) expected to exist.
+        placeholder_on_corrupt: If True, generate a random placeholder PNG (64x64 RGB) when loading fails.
+    """
+    for k in keys:
+        p = root / k
+        if not p.exists():
+            if placeholder_on_corrupt:
+                arr16 = (np.random.rand(64, 64, 3) * 65535).astype('uint16')
+                if _HAS_CV2:
+                    cv2.imwrite(str(p), cv2.cvtColor(arr16, cv2.COLOR_RGB2BGR))  # type: ignore
+                else:
+                    # PIL 对 16bit RGB 支持有限，退化到 8bit 仅作为兜底
+                    Image.fromarray((arr16 >> 8).astype('uint8')).save(p, format='PNG')
+                print(f"[Placeholder] Created missing file: {p}")
+            else:
+                print(f"[Warn] Missing file: {p}")
+            continue
+        try:
+            with Image.open(p) as im:
+                im.verify()  # quick integrity check
+        except Exception as e:
+            if placeholder_on_corrupt:
+                arr16 = (np.random.rand(64, 64, 3) * 65535).astype('uint16')
+                try:
+                    if _HAS_CV2:
+                        cv2.imwrite(str(p), cv2.cvtColor(arr16, cv2.COLOR_RGB2BGR))  # type: ignore
+                    else:
+                        Image.fromarray((arr16 >> 8).astype('uint8')).save(p, format='PNG')
+                    print(f"[Placeholder] Replaced corrupt file: {p} ({e})")
+                except Exception as e2:
+                    print(f"[Error] Failed to replace corrupt file {p}: {e2}")
+            else:
+                print(f"[Warn] Corrupt PNG (will likely skip later): {p} ({e})")
 
 
 def _group_entries(manifest: List[Dict]) -> Dict[str, List[Dict]]:
@@ -40,6 +100,7 @@ def _create_subset_lmdb(
     long_keys = [entry["long_key"] for entry in entries]
 
     print(f"[Subset: {subset}] Building short LMDB at {short_lmdb}")
+    _ensure_valid_pngs(short_root, short_keys, placeholder_on_corrupt=PLACEHOLDER_ON_CORRUPT)
     make_lmdb_from_imgs(
         str(short_root),
         str(short_lmdb),
@@ -49,6 +110,7 @@ def _create_subset_lmdb(
     )
 
     print(f"[Subset: {subset}] Building long LMDB at {long_lmdb}")
+    _ensure_valid_pngs(long_root, long_keys, placeholder_on_corrupt=PLACEHOLDER_ON_CORRUPT)
     make_lmdb_from_imgs(
         str(long_root),
         str(long_lmdb),
@@ -65,6 +127,7 @@ def main() -> None:
     parser.add_argument("--long-root", type=Path, required=True, help="Root directory containing long PNG files.")
     parser.add_argument("--output-root", type=Path, required=True, help="Directory to store output LMDBs.")
     parser.add_argument("--compress-level", type=int, default=1, help="PNG compression level for LMDB storage.")
+    parser.add_argument("--placeholder-on-corrupt", action="store_true", help="Auto-create random placeholder PNGs for missing/corrupt debug images.")
     args = parser.parse_args()
 
     with args.manifest.open("r", encoding="utf-8") as f:
@@ -72,6 +135,11 @@ def main() -> None:
 
     grouped = _group_entries(manifest)
     args.output_root.mkdir(parents=True, exist_ok=True)
+
+    global PLACEHOLDER_ON_CORRUPT
+    PLACEHOLDER_ON_CORRUPT = bool(args.placeholder_on_corrupt)
+    if PLACEHOLDER_ON_CORRUPT:
+        print("[Info] Placeholder mode enabled: corrupt/missing images will be replaced by synthetic PNGs.")
 
     for subset, entries in grouped.items():
         _create_subset_lmdb(

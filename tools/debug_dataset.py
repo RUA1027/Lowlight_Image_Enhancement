@@ -71,7 +71,7 @@ def try_open_image(path: Path, inspect: bool) -> tuple[int, int, int]:
         return w, h, c
 
 
-def check_lmdb_entry(env: lmdb.Environment, key: str, inspect: bool) -> bool:
+def check_lmdb_entry(env, key: str, inspect: bool) -> bool:
     if env is None:
         raise RuntimeError("未安装 lmdb，无法检查 LMDB 数据库")
     with env.begin(write=False) as txn:
@@ -87,6 +87,20 @@ def iter_filtered(manifest: list[dict], subset: Optional[str]) -> Iterable[dict]
     if subset:
         return (entry for entry in manifest if entry.get("subset") == subset)
     return iter(manifest)
+
+
+def _infer_lmdb_subset(lmdb_path: Optional[Path]) -> Optional[str]:
+    if lmdb_path is None:
+        return None
+    name = lmdb_path.name  # e.g. train_small_short.lmdb
+    if not name.endswith('.lmdb'):
+        return None
+    core = name[:-5]  # remove .lmdb
+    # remove trailing _short / _long
+    for suffix in ('_short', '_long'):
+        if core.endswith(suffix):
+            return core[:-len(suffix)]
+    return None
 
 
 def sanity_check(
@@ -111,8 +125,12 @@ def sanity_check(
     if long_root and not long_root.is_dir():
         raise FileNotFoundError(f"长曝光目录不存在: {long_root}")
 
-    env_short = lmdb.open(str(lmdb_short), readonly=True, lock=False, readahead=False) if lmdb_short else None
-    env_long = lmdb.open(str(lmdb_long), readonly=True, lock=False, readahead=False) if lmdb_long else None
+    if (lmdb_short or lmdb_long) and lmdb is None:
+        raise RuntimeError("未安装 lmdb，无法检查 LMDB 数据库")
+    env_short = lmdb.open(str(lmdb_short), readonly=True, lock=False, readahead=False) if (lmdb_short is not None and lmdb is not None) else None
+    env_long = lmdb.open(str(lmdb_long), readonly=True, lock=False, readahead=False) if (lmdb_long is not None and lmdb is not None) else None
+    lmdb_short_subset = _infer_lmdb_subset(lmdb_short)
+    lmdb_long_subset = _infer_lmdb_subset(lmdb_long)
 
     try:
         checked = 0
@@ -120,6 +138,8 @@ def sanity_check(
             pair_id = entry.get("pair_id", "<unknown>")
             short_key = entry.get("short_key")
             long_key = entry.get("long_key")
+            if not isinstance(short_key, str) or not isinstance(long_key, str):
+                raise RuntimeError(f"manifest 记录缺少必要键 short_key/long_key: {entry}")
             short_exp = float(entry.get("short_exposure", 0))
             long_exp = float(entry.get("long_exposure", 0))
             ratio = float(entry.get("exposure_ratio", 0))
@@ -131,14 +151,14 @@ def sanity_check(
                     f"曝光比不一致: long/short={long_exp/short_exp:.6f}, manifest ratio={ratio:.6f}"
                 )
 
-            if short_root:
+            if short_root is not None:
                 short_path = short_root / short_key
                 if not short_path.is_file():
                     raise FileNotFoundError(f"短曝光文件缺失: {short_path}")
                 w, h, c = try_open_image(short_path, inspect)
                 print(f"    短曝光图像存在，分辨率 {w}x{h}，通道 {c}")
 
-            if long_root:
+            if long_root is not None:
                 long_path = long_root / long_key
                 if not long_path.is_file():
                     raise FileNotFoundError(f"长曝光文件缺失: {long_path}")
@@ -146,14 +166,23 @@ def sanity_check(
                 print(f"    长曝光图像存在，分辨率 {w}x{h}，通道 {c}")
 
             if env_short:
-                if not check_lmdb_entry(env_short, short_key, inspect):
-                    raise RuntimeError(f"LMDB 中缺失短曝光 key: {short_key}")
-                print("    LMDB 短曝光 key 存在")
+                # 若传入的 LMDB 属于其他 subset，则跳过该条的 key 检查
+                if lmdb_short_subset and lmdb_short_subset != entry.get('subset'):
+                    if inspect:
+                        print(f"    [Skip] LMDB(short) 子集 {lmdb_short_subset} 与当前记录 {entry.get('subset')} 不匹配")
+                else:
+                    if not check_lmdb_entry(env_short, short_key, inspect):
+                        raise RuntimeError(f"LMDB 中缺失短曝光 key: {short_key}")
+                    print("    LMDB 短曝光 key 存在")
 
             if env_long:
-                if not check_lmdb_entry(env_long, long_key, inspect):
-                    raise RuntimeError(f"LMDB 中缺失长曝光 key: {long_key}")
-                print("    LMDB 长曝光 key 存在")
+                if lmdb_long_subset and lmdb_long_subset != entry.get('subset'):
+                    if inspect:
+                        print(f"    [Skip] LMDB(long) 子集 {lmdb_long_subset} 与当前记录 {entry.get('subset')} 不匹配")
+                else:
+                    if not check_lmdb_entry(env_long, long_key, inspect):
+                        raise RuntimeError(f"LMDB 中缺失长曝光 key: {long_key}")
+                    print("    LMDB 长曝光 key 存在")
 
             checked += 1
             if 0 < limit == checked:

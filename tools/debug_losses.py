@@ -13,9 +13,28 @@ import argparse
 from typing import Tuple
 
 import torch
+import sys, os, pathlib
 
-from NewBP_model.losses import HybridLossPlus
-from NewBP_model.newbp_net_arch import create_crosstalk_psf
+# ----- Robust path bootstrap (project root + NAFNet_base/basicsr + NewBP_model) -----
+_THIS = pathlib.Path(__file__).resolve()
+_ROOT = _THIS.parents[1]
+_CANDIDATES = [
+    _ROOT,
+    _ROOT / "NAFNet_base",  # include parent so `import basicsr` works as a top-level package
+    _ROOT / "NewBP_model",
+]
+for p in _CANDIDATES:
+    sp = str(p)
+    if sp not in sys.path:
+        sys.path.insert(0, sp)
+
+try:
+    from NewBP_model.losses import HybridLossPlus  # type: ignore
+    from NewBP_model.newbp_net_arch import create_crosstalk_psf  # type: ignore
+except ModuleNotFoundError as e:
+    raise ModuleNotFoundError(
+        f"无法导入 NewBP_model 或 basicsr: {e}. 请确认已在项目根执行、并安装依赖。"\
+    )
 
 
 def build_tensors(
@@ -78,7 +97,7 @@ def run_checks(device: torch.device, steps: int, height: int, width: int) -> Non
         if not torch.isfinite(loss_val):
             raise RuntimeError(f"Mono PSF loss 出现非有限值 (step={step}): {logs}")
         loss_val.backward()
-        grad_norm = bhat.grad.detach().norm().item()
+        grad_norm = bhat.grad.norm().item() if bhat.grad is not None else 0.0
         print(f"[mono] step={step} loss={loss_val.item():.6f} grad_norm={grad_norm:.6f}")
 
         bhat2, b2, a2 = build_tensors(batch=2, channels=3, height=height, width=width, device=device)
@@ -96,7 +115,7 @@ def run_checks(device: torch.device, steps: int, height: int, width: int) -> Non
         if not torch.isfinite(loss_val_rgb):
             raise RuntimeError(f"RGB PSF loss 出现非有限值 (step={step}): {logs_rgb}")
         loss_val_rgb.backward()
-        grad_norm_rgb = bhat2.grad.detach().norm().item()
+        grad_norm_rgb = bhat2.grad.norm().item() if bhat2.grad is not None else 0.0
         print(f"[rgb ] step={step} loss={loss_val_rgb.item():.6f} grad_norm={grad_norm_rgb:.6f}")
 
 

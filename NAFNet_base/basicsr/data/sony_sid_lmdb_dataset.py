@@ -33,6 +33,9 @@ def _load_png_uint16(buffer: bytes) -> np.ndarray:
     img = cv2.imdecode(np_buffer, cv2.IMREAD_UNCHANGED)
     if img is None:
         raise ValueError("Failed to decode PNG buffer into an image.")
+    # 允许占位图为 uint8（调试用途），自动提升到 uint16 以兼容管线
+    if img.dtype == np.uint8:
+        img = (img.astype(np.uint16) * 257)
     if img.dtype != np.uint16:
         raise TypeError(f"Expected uint16 image, got dtype={img.dtype}.")
     if img.ndim == 2:

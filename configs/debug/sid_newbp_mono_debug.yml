@@ -13,7 +13,8 @@ datasets:
     phase: train
     manifest_path: /path/to/manifest_sid.json  # TODO: replace
     subset: train_small
-    patch_size: 128
+    # For tiny synthetic debug assets (64x64) reduce patch_size accordingly
+    patch_size: 64
     samples_per_pair: 1
     random_crop: true
     batch_size_per_gpu: 1
@@ -34,6 +35,7 @@ datasets:
     phase: val
     manifest_path: /path/to/manifest_sid.json  # TODO: replace
     subset: val_small
+    patch_size: 64
     random_crop: false
     samples_per_pair: 1
     batch_size_per_gpu: 1
