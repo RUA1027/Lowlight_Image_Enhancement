@@ -10,6 +10,7 @@ from torch.nn import functional as F
 import numpy as np
 
 from basicsr.models.losses.loss_util import weighted_loss
+from basicsr.utils.registry import LOSS_REGISTRY
 
 _reduction_modes = ['none', 'mean', 'sum']
 
@@ -30,6 +31,7 @@ def charbonnier_loss(pred, target, eps=1e-12):
     return torch.sqrt(diff * diff + eps)
 
 
+@LOSS_REGISTRY.register()
 class L1Loss(nn.Module):
     """L1 (mean absolute error, MAE) loss.
 
@@ -59,6 +61,7 @@ class L1Loss(nn.Module):
         return self.loss_weight * l1_loss(
             pred, target, weight, reduction=self.reduction)
 
+@LOSS_REGISTRY.register()
 class MSELoss(nn.Module):
     """MSE (L2) loss.
 
@@ -89,6 +92,7 @@ class MSELoss(nn.Module):
             pred, target, weight, reduction=self.reduction)
 
 
+@LOSS_REGISTRY.register()
 class CharbonnierLoss(nn.Module):
     """Robust Charbonnier loss (smooth L1)."""
 
@@ -105,6 +109,7 @@ class CharbonnierLoss(nn.Module):
         return self.loss_weight * charbonnier_loss(
             pred, target, weight, reduction=self.reduction, eps=self.eps)
 
+@LOSS_REGISTRY.register()
 class PSNRLoss(nn.Module):
 
     def __init__(self, loss_weight=1.0, reduction='mean', toY=False):

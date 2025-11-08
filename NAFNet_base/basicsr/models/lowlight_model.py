@@ -17,17 +17,10 @@ try:  # pragma: no cover - compatibility with legacy registry export
 except ImportError:  # pragma: no cover
     from basicsr.utils import ARCH_REGISTRY, MODEL_REGISTRY  # type: ignore
 
-import importlib
-
-# Try to import build_loss from possible locations at runtime to avoid static resolution errors.
-_build_loss = None
-try:
-    mod = importlib.import_module("basicsr.losses")
-    _build_loss = getattr(mod, "build_loss")
-except (ImportError, ModuleNotFoundError, AttributeError):  # pragma: no cover
-    mod = importlib.import_module("basicsr.models.losses")
-    _build_loss = getattr(mod, "build_loss")
-build_loss = _build_loss
+try:  # Prefer the canonical basicsr.losses package when available
+    from basicsr.losses import build_loss
+except (ImportError, ModuleNotFoundError, AttributeError):  # pragma: no cover - fallback for local repo
+    from basicsr.models.losses import build_loss  # type: ignore
 
 
 def build_network(opt: Dict) -> torch.nn.Module:
