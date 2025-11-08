@@ -67,6 +67,7 @@ class SonySIDLMDBDataset(torch_data.Dataset):
             manifest_data = json.load(f)
 
         subset = opt.get("subset", self.phase)
+        self.subset = subset
         allowed_ids = set(opt.get("allowed_pair_ids", []))
         entries: List[Dict] = []
 
@@ -83,16 +84,31 @@ class SonySIDLMDBDataset(torch_data.Dataset):
         self.entries = entries
         self._num_pairs = len(entries)
 
-        io_backend_opt = dict(opt["io_backend"])
+        io_backend_opt = dict(opt.get("io_backend", {}))
+        # Fallback: allow direct short/long lmdb paths in opt for legacy configs
+        if not io_backend_opt and ("short_lmdb" in opt or "long_lmdb" in opt):
+            io_backend_opt = {
+                "type": "lmdb",
+                "db_paths": [opt.get("short_lmdb"), opt.get("long_lmdb")],
+                "client_keys": ["short", "long"],
+            }
+        if not io_backend_opt:
+            raise KeyError("Dataset option must provide 'io_backend' or 'short_lmdb'/'long_lmdb' paths.")
         self.file_client: Optional[FileClient] = None
         backend_type = io_backend_opt.pop("type")
         self.io_backend_type = backend_type
 
         if backend_type == "lmdb":
+            db_paths = io_backend_opt.get("db_paths")
+            client_keys = io_backend_opt.get("client_keys")
+            if not db_paths or not client_keys:
+                raise KeyError("LMDB backend requires 'db_paths' and 'client_keys'.")
+            if any(not path for path in db_paths):
+                raise ValueError(f"Invalid LMDB paths provided: {db_paths}")
             self.file_client = FileClient(
                 backend="lmdb",
-                db_paths=io_backend_opt["db_paths"],
-                client_keys=io_backend_opt["client_keys"],
+                db_paths=db_paths,
+                client_keys=client_keys,
                 readonly=True,
                 lock=False,
                 readahead=False,
@@ -192,14 +208,17 @@ class SonySIDLMDBDataset(torch_data.Dataset):
         sample = {
             "lq": tensor_short,
             "gt": tensor_long,
+            "short": tensor_short,
+            "long": tensor_long,
             "short_raw": tensor_short_raw,
             "long_raw": tensor_long_raw,
-            # short_obs 是 sRGB/对齐后的短曝光图，用于 sRGB 物理一致性项
+            # short_obs alignment matches the sRGB input tensor
             "short_obs": tensor_short,
             "expo_ratio": torch.full((1, 1, 1), expo_ratio, dtype=torch.float32),
             "pair_id": pair_id,
             "lq_path": short_key,
             "gt_path": long_key,
+            "key": str(pair_id),
         }
 
         if self.return_metadata:
