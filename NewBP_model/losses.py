@@ -1,8 +1,10 @@
+import warnings
+from typing import Dict, Optional, Tuple, Union
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
-from typing import Optional, Dict, Tuple
 
 # Optional dependencies (safe to miss if not used)
 try:
@@ -15,27 +17,53 @@ except Exception:  # optional
     Kloss = None
 
 
+def _resolve_device(device: Union[str, torch.device]) -> torch.device:
+    """Map config/device strings (including 'auto') to a concrete torch.device."""
+
+    if isinstance(device, torch.device):
+        return device
+    if isinstance(device, str):
+        if device == 'auto':
+            return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        return torch.device(device)
+    raise TypeError(f"Unsupported device spec: {device!r}")
+
+
 class PerceptualLoss(nn.Module):
     """VGG-based perceptual loss.
 
     Assumes inputs are sRGB in [0,1]. Applies ImageNet mean/std normalization
     before feeding into VGG19 feature extractor (first 36 layers).
     """
-    def __init__(self, device='cuda', use_mse: bool = True, reduction: str = 'mean'):
+
+    def __init__(self, device: Union[str, torch.device] = 'cuda', use_mse: bool = True, reduction: str = 'mean'):
         super().__init__()
         vgg_features = models.vgg19(weights=models.VGG19_Weights.IMAGENET1K_V1).features
-        self.vgg = nn.Sequential(*list(vgg_features.children())[:36]).to(device).eval()
+        self.vgg = nn.Sequential(*list(vgg_features.children())[:36]).eval()
         for param in self.vgg.parameters():
             param.requires_grad = False
         # ImageNet mean/std (RGB)
-        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
-        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+        mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(1, 3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(1, 3, 1, 1)
+        self.register_buffer('mean', mean, persistent=False)
+        self.register_buffer('std', std, persistent=False)
         self.loss_fn = F.mse_loss if use_mse else F.l1_loss
         self.reduction = reduction
+        self.to(_resolve_device(device))
 
-    def forward(self, generated_img, target_img):
-        xg = (generated_img.clamp(0, 1) - self.mean) / self.std
-        xt = (target_img.clamp(0, 1) - self.mean) / self.std
+    def forward(self, generated_img: torch.Tensor, target_img: torch.Tensor) -> torch.Tensor:
+        device = generated_img.device
+        if target_img.device != device:
+            target_img = target_img.to(device)
+        vgg_param = next(self.vgg.parameters(), None)
+        if vgg_param is not None and vgg_param.device != device:
+            self.vgg = self.vgg.to(device)
+        mean = self.mean if self.mean.device == device else self.mean.to(device)
+        std = self.std if self.std.device == device else self.std.to(device)
+        xg = (generated_img.clamp(0, 1) - mean) / std
+        xt = (target_img.clamp(0, 1) - mean) / std
+        xg = xg.float()
+        xt = xt.float()
         features_gen = self.vgg(xg)
         features_target = self.vgg(xt)
         return self.loss_fn(features_gen, features_target, reduction=self.reduction)
@@ -47,8 +75,10 @@ class HybridLoss(nn.Module):
     # lambda_perceptual: 感知损失的权重
     # device: 设备
         super().__init__()
+        device = _resolve_device(device)
         self.lambda_l1 = lambda_l1
         self.lambda_perceptual = lambda_perceptual
+        self.device = device
         self.l1_loss = nn.L1Loss().to(device)
         self.perceptual_loss = PerceptualLoss(device=device)
 
@@ -213,12 +243,25 @@ class HybridLossPlus(nn.Module):
         physics_psf_module: Optional[nn.Module] = None,
     ):
         super().__init__()
+        device = _resolve_device(device)
         self.register_buffer('_zero', torch.tensor(0.0), persistent=False)
         self._zero: torch.Tensor
         self.l1_raw = nn.L1Loss().to(device)
         self.perc = PerceptualLoss(device=device)
-        self.deltaE = DeltaE00Loss() if use_deltaE else None
-        self.ssim = SSIMLoss() if use_ssim else None
+        self.deltaE = None
+        if use_deltaE:
+            if K is None or Kcolor is None:
+                warnings.warn("DeltaE term disabled because Kornia is not installed. Run `pip install kornia` to "
+                              "re-enable it.", RuntimeWarning)
+            else:
+                self.deltaE = DeltaE00Loss()
+        self.ssim = None
+        if use_ssim:
+            if Kloss is None:
+                warnings.warn("SSIM term disabled because Kornia is not installed. Run `pip install kornia` to "
+                              "re-enable it.", RuntimeWarning)
+            else:
+                self.ssim = SSIMLoss().to(device)
         self.lpips = None
         if use_lpips:
             try:
@@ -226,11 +269,16 @@ class HybridLossPlus(nn.Module):
                 self.lpips = lpips.LPIPS(net='vgg').to(device).eval()
                 for p in self.lpips.parameters():
                     p.requires_grad = False
-            except Exception:
+            except Exception as exc:
+                warnings.warn(f"Disabling LPIPS term because initialisation failed: {exc}", RuntimeWarning)
                 self.lpips = None
         # RAW-domain physics via kernels OR sRGB-domain physics via PSF module
         self.phys = PhysicsConsistencyLoss(physics_kernel, device=device) if use_phys and physics_kernel is not None else None
-        self.phys_srgb = PhysicalConsistencyLossSRGB(physics_psf_module) if use_phys and physics_psf_module is not None else None
+        if use_phys and physics_psf_module is not None:
+            physics_psf_module = physics_psf_module.to(device)
+            self.phys_srgb = PhysicalConsistencyLossSRGB(physics_psf_module)
+        else:
+            self.phys_srgb = None
 
         self.use_uncertainty = use_uncertainty
         if use_uncertainty:

@@ -27,10 +27,22 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 import warnings
 
 import torch
-from fvcore.nn import FlopCountAnalysis
+
+try:  # pragma: no cover - optional dependency
+    from fvcore.nn import FlopCountAnalysis  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    FlopCountAnalysis = None  # type: ignore
 
 TensorLike = Union[torch.Tensor, Any]
 InputsType = Tuple[TensorLike, ...]
+
+
+def _ensure_fvcore() -> None:
+    if FlopCountAnalysis is None:
+        raise ImportError(
+            "fvcore is required for FLOPs analysis. Install it via `pip install fvcore` "
+            "or disable FLOPs counting utilities."
+        )
 
 
 def _ensure_tuple(inputs: Union[TensorLike, Sequence[TensorLike], InputsType]) -> InputsType:
@@ -252,6 +264,7 @@ class FLOPsCounter:
             model.to(chosen_device)
             moved_model = True
 
+        _ensure_fvcore()
         analysis = FlopCountAnalysis(model, normalized_inputs)
         analysis.unsupported_ops_warnings(self.warn_unsupported)
         analysis.uncalled_modules_warnings(self.warn_unsupported)
@@ -348,6 +361,7 @@ def count_flops(model: torch.nn.Module, input_tensor: torch.Tensor, unit: str = 
     if unit not in {"M", "G"}:
         raise ValueError("`unit` must be 'M' or 'G'.")
 
+    _ensure_fvcore()
     counter = FLOPsCounter(convention="fvcore_fma1", per_batch=True)
     stats = counter(model, (input_tensor,))
     total_fma1 = stats.total
