@@ -5,6 +5,7 @@
 # Copyright 2018-2020 BasicSR Authors
 # ------------------------------------------------------------------------
 import importlib
+import re
 from os import path as osp
 
 from basicsr.utils import get_root_logger, scandir
@@ -43,6 +44,19 @@ def create_model(opt):
     model_type = opt['model_type']
 
     model_cls = MODEL_REGISTRY.get(model_type) if MODEL_REGISTRY is not None else None
+
+    # Try to import the most likely module directly first to avoid importing heavy modules unnecessarily.
+    if model_cls is None:
+        guess = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", model_type).lower()
+        if not guess.endswith("_model"):
+            guess = f"{guess}_model"
+        try:
+            importlib.import_module(f"basicsr.models.{guess}")
+        except Exception:
+            pass
+        # Re-check registry after the direct import attempt
+        if MODEL_REGISTRY is not None:
+            model_cls = MODEL_REGISTRY.get(model_type)
 
     if model_cls is None:
         # Fallback to scanning modules until the requested model shows up.

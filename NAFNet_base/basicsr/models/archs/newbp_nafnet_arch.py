@@ -44,6 +44,7 @@ def create_newbp_net(
     )
 
 
+@ARCH_REGISTRY.register()
 def NewBPNAFNet(**kwargs: Any):
     """Alias used by BasicSR network registry."""
 

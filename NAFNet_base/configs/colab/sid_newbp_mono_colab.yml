@@ -1,0 +1,49 @@
+name: sid_newbp_mono_colab
+model_type: LowlightModel
+num_gpu: 0
+manual_seed: 0
+
+network_g:
+  type: NewBPNAFNet
+  in_channels: 3
+  kernel_type: panchromatic
+  kernel_spec: P2
+  width: 16
+  enc_blk_nums: [1, 1, 1, 1]
+  middle_blk_num: 1
+  dec_blk_nums: [1, 1, 1, 1]
+
+datasets:
+  train:
+    name: dummy
+    type: PairedImageDataset
+    dataroot_gt: ./dummy_gt
+    dataroot_lq: ./dummy_lq
+    io_backend:
+      type: disk
+  val:
+    name: dummy_val
+    type: PairedImageDataset
+    dataroot_gt: ./dummy_gt
+    dataroot_lq: ./dummy_lq
+    io_backend:
+      type: disk
+
+train:
+  optim_g:
+    type: Adam
+    lr: 1.0e-4
+  pixel_opt:
+    type: L1Loss
+    loss_weight: 1.0
+  total_iter: 10
+  lr_scheduler:
+    type: MultiStepLR
+    milestones: [5]
+    gamma: 0.5
+
+path:
+  root: .
+
+logger:
+  use_tb_logger: false

@@ -18,6 +18,8 @@ except ImportError:  # pragma: no cover
     from basicsr.utils import ARCH_REGISTRY, MODEL_REGISTRY  # type: ignore
 
 from basicsr.models.losses import build_loss
+# Ensure all arch modules are imported so ARCH_REGISTRY is populated
+from basicsr.models import archs as _archs  # noqa: F401
 
 
 def build_network(opt: Dict) -> torch.nn.Module:

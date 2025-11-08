@@ -51,7 +51,7 @@ class BaseModel():
             rgb2bgr (bool): Whether to save images using rgb2bgr. Default: True
             use_image (bool): Whether to use saved images to compute metrics (PSNR, SSIM), if not, then use data directly from network' output. Default: True
         """
-        if self.opt['dist']:
+        if self.opt.get('dist', False):
             return self.dist_validation(dataloader, current_iter, tb_logger, save_img, rgb2bgr, use_image)
         else:
             return self.nondist_validation(dataloader, current_iter, tb_logger,
@@ -69,7 +69,7 @@ class BaseModel():
         """
 
         net = net.to(self.device)
-        if self.opt['dist']:
+        if self.opt.get('dist', False):
             find_unused_parameters = self.opt.get('find_unused_parameters',
                                                   False)
             net = DistributedDataParallel(
