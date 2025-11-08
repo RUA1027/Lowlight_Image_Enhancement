@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import Any, Optional, Sequence
 
 try:
+    from basicsr.utils.registry import ARCH_REGISTRY
+except ImportError:  # pragma: no cover
+    from basicsr.utils import ARCH_REGISTRY  # type: ignore
+
+try:
     from NewBP_model.newbp_net_arch import create_newbp_net as _create_newbp_net  # type: ignore
 except ImportError as exc:  # pragma: no cover - optional dependency
     raise ImportError(
@@ -12,6 +17,7 @@ except ImportError as exc:  # pragma: no cover - optional dependency
     ) from exc
 
 
+@ARCH_REGISTRY.register()
 def create_newbp_net(
     in_channels: int = 3,
     kernel_type: str = "panchromatic",
