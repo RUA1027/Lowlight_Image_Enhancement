@@ -1,51 +1,43 @@
-"""Lightweight model wrapper for low-light enhancement experiments."""
+"""Minimal LowlightModel compatible with BasicSR registries and SID datasets."""
 
 from __future__ import annotations
 
-import importlib
+from collections import OrderedDict
 from copy import deepcopy
-from typing import Any, Dict, Optional
+from typing import Dict
 
 import torch
 import torch.nn.functional as F
 
-from basicsr.models.archs import define_network
+from basicsr.archs import build_network
+from basicsr.losses import build_loss
 from basicsr.models.base_model import BaseModel
 from basicsr.utils import get_root_logger
-from basicsr.utils.registry import MODEL_REGISTRY
 
-loss_module = importlib.import_module("basicsr.models.losses")
-
-
-def _build_loss(loss_opt: Optional[Dict[str, Any]], device: torch.device):
-    if not loss_opt:
-        return None
-    cfg = deepcopy(loss_opt)
-    loss_type = cfg.pop("type")
-    cls = getattr(loss_module, loss_type)
-    return cls(**cfg).to(device)
+try:  # pragma: no cover - compatibility with legacy registry export
+    from basicsr.utils.registry import MODEL_REGISTRY
+except ImportError:  # pragma: no cover
+    from basicsr.utils import MODEL_REGISTRY  # type: ignore
 
 
 @MODEL_REGISTRY.register()
 class LowlightModel(BaseModel):
-    """Minimal training wrapper that works with SID-style datasets."""
+    """Generic low-light enhancement wrapper supporting SID-style inputs."""
 
-    def __init__(self, opt: Dict[str, Any]):
+    def __init__(self, opt: Dict):
         super().__init__(opt)
         self.log_dict: Dict[str, float] = {}
 
-        self.net_g = define_network(deepcopy(opt["network_g"]))
+        net_opt = deepcopy(opt["network_g"])
+        self.net_g = build_network(net_opt)
         self.net_g = self.model_to_device(self.net_g)
         self.print_network(self.net_g)
 
-        load_path = self.opt["path"].get("pretrain_network_g")
+        load_path = opt["path"].get("pretrain_network_g")
         if load_path:
-            self.load_network(
-                self.net_g,
-                load_path,
-                strict=self.opt["path"].get("strict_load_g", True),
-                param_key=self.opt["path"].get("param_key", "params"),
-            )
+            strict = opt["path"].get("strict_load_g", True)
+            param_key = opt["path"].get("param_key_g", "params")
+            self.load_network(self.net_g, load_path, strict, param_key)
 
         self.cri_pix = None
         self.cri_perceptual = None
@@ -60,27 +52,39 @@ class LowlightModel(BaseModel):
         self.net_g.train()
         train_opt = self.opt.get("train", {})
 
-        self.cri_pix = _build_loss(deepcopy(train_opt.get("pixel_opt")), self.device)
-        self.cri_perceptual = _build_loss(deepcopy(train_opt.get("perceptual_opt")), self.device)
-        self.cri_ssim = _build_loss(deepcopy(train_opt.get("ssim_opt")), self.device)
-        if not any([self.cri_pix, self.cri_perceptual, self.cri_ssim]):
-            get_root_logger().warning("All configured losses missing; falling back to L1 inside optimize_parameters.")
+        pixel_opt = deepcopy(train_opt.get("pixel_opt"))
+        if pixel_opt:
+            self.cri_pix = build_loss(pixel_opt).to(self.device)
 
-        optim_cfg = deepcopy(train_opt.get("optim_g", {}))
-        optim_type = optim_cfg.pop("type", "Adam")
+        percep_opt = deepcopy(train_opt.get("perceptual_opt"))
+        if percep_opt:
+            self.cri_perceptual = build_loss(percep_opt).to(self.device)
+
+        ssim_opt = deepcopy(train_opt.get("ssim_opt"))
+        if ssim_opt:
+            self.cri_ssim = build_loss(ssim_opt).to(self.device)
+
+        if not any([self.cri_pix, self.cri_perceptual, self.cri_ssim]):
+            get_root_logger().warning(
+                "LowlightModel: no losses configured; optimize_parameters will fallback to L1."
+            )
+
+        optim_cfg = deepcopy(train_opt.get("optim_g", {"type": "AdamW", "lr": 1e-4}))
+        optim_type = optim_cfg.pop("type", "AdamW").lower()
         params = [p for p in self.net_g.parameters() if p.requires_grad]
-        if optim_type == "Adam":
-            optimizer = torch.optim.Adam(params, **optim_cfg)
-        elif optim_type == "AdamW":
+        if optim_type == "adamw":
             optimizer = torch.optim.AdamW(params, **optim_cfg)
-        elif optim_type == "SGD":
+        elif optim_type == "adam":
+            optimizer = torch.optim.Adam(params, **optim_cfg)
+        elif optim_type == "sgd":
             optimizer = torch.optim.SGD(params, **optim_cfg)
         else:
-            raise ValueError(f"Unsupported optimizer type: {optim_type}")
+            raise NotImplementedError(f"LowlightModel does not support optimizer '{optim_type}'.")
+
         self.optimizer_g = optimizer
         self.optimizers.append(self.optimizer_g)
-
-        self.setup_schedulers()
+        if train_opt.get("scheduler"):
+            self.setup_schedulers()
 
     def feed_data(self, data: Dict[str, torch.Tensor]) -> None:
         if "lq" in data and "gt" in data:
@@ -90,63 +94,41 @@ class LowlightModel(BaseModel):
             self.lq = data["short"].to(self.device)
             self.gt = data["long"].to(self.device)
         else:
-            raise ValueError("LowlightModel.feed_data expects ('lq','gt') or ('short','long') keys.")
-
-        self.meta = {}
-        if "expo_ratio" in data:
-            self.meta["expo_ratio"] = data["expo_ratio"].to(self.device)
-        if "ratio" in data:
-            self.meta["ratio"] = data["ratio"]
-        if "metadata" in data:
-            self.meta["metadata"] = data["metadata"]
+            raise ValueError(f"LowlightModel feed_data expects ('lq','gt') or ('short','long'), got {list(data.keys())}")
 
     def optimize_parameters(self) -> None:
         if not self.is_train:
-            raise RuntimeError("optimize_parameters can only be called during training mode.")
+            return
 
-        for opt in self.optimizers:
-            opt.zero_grad()
-
+        self.optimizer_g.zero_grad()
+        self.net_g.train()
         self.output = self.net_g(self.lq)
+
         total_loss = 0.0
-        loss_terms = {}
-
         if self.cri_pix:
-            loss_pix = self.cri_pix(self.output, self.gt)
-            total_loss = total_loss + loss_pix
-            loss_terms["loss_pix"] = float(loss_pix.detach().cpu())
-
+            total_loss = total_loss + self.cri_pix(self.output, self.gt)
         if self.cri_perceptual:
-            loss_perc = self.cri_perceptual(self.output, self.gt)
-            total_loss = total_loss + loss_perc
-            loss_terms["loss_perc"] = float(loss_perc.detach().cpu())
-
+            total_loss = total_loss + self.cri_perceptual(self.output, self.gt)
         if self.cri_ssim:
-            loss_ssim = self.cri_ssim(self.output, self.gt)
-            total_loss = total_loss + loss_ssim
-            loss_terms["loss_ssim"] = float(loss_ssim.detach().cpu())
+            total_loss = total_loss + self.cri_ssim(self.output, self.gt)
 
-        if isinstance(total_loss, float) and total_loss == 0.0:
-            fallback = F.l1_loss(self.output, self.gt)
-            total_loss = fallback
-            loss_terms["loss_l1_fallback"] = float(fallback.detach().cpu())
+        if isinstance(total_loss, (int, float)) or total_loss == 0:
+            total_loss = F.l1_loss(self.output, self.gt)
 
         total_loss.backward()
-        for opt in self.optimizers:
-            opt.step()
+        self.optimizer_g.step()
 
-        self.log_dict = {"loss": float(total_loss.detach().cpu())}
-        self.log_dict.update(loss_terms)
+        self.log_dict = {"loss_total": float(total_loss.detach().cpu())}
 
+    @torch.no_grad()
     def test(self) -> None:
         self.net_g.eval()
-        with torch.no_grad():
-            self.output = self.net_g(self.lq)
+        self.output = self.net_g(self.lq)
         if self.is_train:
             self.net_g.train()
 
     def get_current_visuals(self) -> Dict[str, torch.Tensor]:
-        visuals = {}
+        visuals = OrderedDict()
         if hasattr(self, "lq"):
             visuals["lq"] = self.lq.detach().cpu()
         if hasattr(self, "gt"):
