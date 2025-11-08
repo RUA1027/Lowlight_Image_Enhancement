@@ -1,4 +1,4 @@
-name: sid_newbp_mono_colab
+name: sid_newbp_mono_colab_debug
 model_type: LowlightModel
 num_gpu: 0
 manual_seed: 0
@@ -31,15 +31,17 @@ datasets:
 
 train:
   optim_g:
-    type: Adam
+    type: AdamW
     lr: 0.0001
+    weight_decay: 0.0
+    betas: [0.9, 0.999]
   pixel_opt:
     type: L1Loss
     loss_weight: 1.0
-  total_iter: 10
+  total_iter: 4
   lr_scheduler:
     type: MultiStepLR
-    milestones: [5]
+    milestones: [2]
     gamma: 0.5
 
 path:
