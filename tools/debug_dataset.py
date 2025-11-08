@@ -51,6 +51,33 @@ def check_ratio(short_exposure: float, long_exposure: float, ratio: float, tol: 
     return math.isclose(expected, ratio, rel_tol=tol, abs_tol=tol)
 
 
+def _get_first(entry: dict, keys: tuple[str, ...], positive_only: bool = True) -> Optional[float]:
+    """Return the first convertible float from entry among keys."""
+
+    for key in keys:
+        if key in entry:
+            value = entry[key]
+            if value in {None, ""}:
+                continue
+            try:
+                val = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(val):
+                continue
+            if positive_only and val <= 0:
+                continue
+            if not positive_only and val == 0:
+                continue
+                return val
+    return None
+
+
+SHORT_KEYS = ("short_exposure", "short_exp", "shortExposure", "short", "short_iso")
+LONG_KEYS = ("long_exposure", "long_exp", "longExposure", "long")
+RATIO_KEYS = ("exposure_ratio", "ratio", "expo_ratio")
+
+
 def try_open_image(path: Path, inspect: bool) -> tuple[int, int, int]:
     suffix = path.suffix.lower()
     if suffix in {".arw", ".dng", ".nef", ".cr2"}:
@@ -140,15 +167,21 @@ def sanity_check(
             long_key = entry.get("long_key")
             if not isinstance(short_key, str) or not isinstance(long_key, str):
                 raise RuntimeError(f"manifest 记录缺少必要键 short_key/long_key: {entry}")
-            short_exp = float(entry.get("short_exposure", 0))
-            long_exp = float(entry.get("long_exposure", 0))
-            ratio = float(entry.get("exposure_ratio", 0))
+            short_exp = _get_first(entry, SHORT_KEYS)
+            long_exp = _get_first(entry, LONG_KEYS)
+            ratio = _get_first(entry, RATIO_KEYS)
 
             print(f"检查 pair: {pair_id} (subset={entry.get('subset', 'unknown')})")
 
-            if not check_ratio(short_exp, long_exp, ratio):
+            if short_exp is None or long_exp is None or ratio is None:
+                print(
+                    "    [Warn] 曝光信息缺失或无效"
+                    f" (short={short_exp}, long={long_exp}, ratio={ratio})，跳过曝光检查"
+                )
+            elif not check_ratio(short_exp, long_exp, ratio):
+                actual_ratio = long_exp / short_exp
                 raise RuntimeError(
-                    f"曝光比不一致: long/short={long_exp/short_exp:.6f}, manifest ratio={ratio:.6f}"
+                    f"曝光比不一致: long/short={actual_ratio:.6f}, manifest ratio={ratio:.6f}"
                 )
 
             if short_root is not None:
