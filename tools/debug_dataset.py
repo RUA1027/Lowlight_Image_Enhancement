@@ -69,7 +69,7 @@ def _get_first(entry: dict, keys: tuple[str, ...], positive_only: bool = True) -
                 continue
             if not positive_only and val == 0:
                 continue
-                return val
+            return val
     return None
 
 
@@ -162,7 +162,15 @@ def sanity_check(
     try:
         checked = 0
         for entry in iter_filtered(manifest, subset):
-            pair_id = entry.get("pair_id", "<unknown>")
+            pair_name = (
+                entry.get("pair_name")
+                or entry.get("pair_id")
+                or entry.get("scene_id")
+                or entry.get("short_key")
+                or entry.get("short")
+                or entry.get("long_key")
+                or "<unknown>"
+            )
             short_key = entry.get("short_key")
             long_key = entry.get("long_key")
             if not isinstance(short_key, str) or not isinstance(long_key, str):
@@ -171,7 +179,7 @@ def sanity_check(
             long_exp = _get_first(entry, LONG_KEYS)
             ratio = _get_first(entry, RATIO_KEYS)
 
-            print(f"检查 pair: {pair_id} (subset={entry.get('subset', 'unknown')})")
+            print(f"检查 pair: {pair_name} (subset={entry.get('subset', 'unknown')})")
 
             if short_exp is None or long_exp is None or ratio is None:
                 print(
