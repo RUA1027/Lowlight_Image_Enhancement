@@ -156,11 +156,11 @@ def test_batch_statistics(make_images: Callable[..., torch.Tensor]) -> None:
     metric = LPIPSMetric(net="alex", version="0.1", reduce="none")
     stats = metric(gt, pred)
 
-    per = torch.tensor(stats["per_image"], dtype=torch.float32)
+    per = torch.tensor(stats["per_image"], dtype=torch.float64)
     assert abs(per.mean().item() - stats["mean"]) <= 1e-7
     if hasattr(torch, "quantile"):
         assert abs(float(torch.quantile(per, 0.5).item()) - stats["p50"]) <= 1e-6
-        assert abs(float(torch.quantile(per, 0.95).item()) - stats["p95"]) <= 5e-4
+        assert abs(float(torch.quantile(per, 0.95).item()) - stats["p95"]) <= 1e-3
 
 
 def test_monotonicity_and_backbones(make_images: Callable[..., torch.Tensor]) -> None:

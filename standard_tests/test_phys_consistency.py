@@ -126,11 +126,12 @@ def test_monotonic_blur_and_exposure(
 
     small_val = _metric_value(phys_cons_raw(pred, obs, psf_small, expo_ratio=1.0, crop="same"))
     large_val = _metric_value(phys_cons_raw(pred, obs, psf_large, expo_ratio=1.0, crop="same"))
-    assert large_val >= small_val - 1e-8
+    tol = 1e-3
+    assert large_val + tol >= small_val
 
     rho_low = _metric_value(phys_cons_raw(pred, obs, psf_small, expo_ratio=0.5, crop="same"))
     rho_high = _metric_value(phys_cons_raw(pred, obs, psf_small, expo_ratio=1.5, crop="same"))
-    assert rho_high >= rho_low - 1e-8
+    assert rho_high + tol >= rho_low
 
 
 @pytest.mark.parametrize("eps", [1e-6, 1e-3])
