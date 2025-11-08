@@ -24,8 +24,6 @@ model_filenames = [
 
 _MODEL_CACHE = {}
 
-from . import lowlight_model  # noqa: F401 - ensure LowlightModel registers itself
-
 
 def _iterate_model_modules():
     """Yield imported model modules, importing lazily to avoid heavy deps at import time."""

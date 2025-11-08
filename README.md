@@ -247,3 +247,16 @@ ms_per_image = measure_inference_time(net, x, num_warmup=20, num_runs=100)
 [7]: https://docs.pytorch.org/docs/stable/generated/torch.cuda.Event.html?utm_source=chatgpt.com "Event - torch.cuda"
 [8]: https://kornia.readthedocs.io/en/latest/color.html?utm_source=chatgpt.com "kornia.color - Read the Docs"
 [9]: https://www.cns.nyu.edu/pub/lcv/wang03-preprint.pdf?utm_source=chatgpt.com "Image Quality Assessment: From Error Visibility to Structural ..."
+## Training Entrypoint
+
+- Recommended (from project root):
+
+  `PYTHONPATH=. python -m basicsr.train -opt NAFNet_base/configs/colab/sid_newbp_mono_colab.yml --launcher none`
+
+- Alternative (also from project root):
+
+  `python NAFNet_base/basicsr/train.py -opt NAFNet_base/configs/colab/sid_newbp_mono_colab.yml --launcher none`
+
+Notes:
+- These commands ensure `import basicsr` resolves to this repository (not any global pip package).
+- Avoid `python basicsr/train.py` style invocations; use one of the above instead.

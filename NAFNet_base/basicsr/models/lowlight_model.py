@@ -17,10 +17,7 @@ try:  # pragma: no cover - compatibility with legacy registry export
 except ImportError:  # pragma: no cover
     from basicsr.utils import ARCH_REGISTRY, MODEL_REGISTRY  # type: ignore
 
-try:  # Prefer the canonical basicsr.losses package when available
-    from basicsr.losses import build_loss
-except (ImportError, ModuleNotFoundError, AttributeError):  # pragma: no cover - fallback for local repo
-    from basicsr.models.losses import build_loss  # type: ignore
+from basicsr.models.losses import build_loss
 
 
 def build_network(opt: Dict) -> torch.nn.Module:
