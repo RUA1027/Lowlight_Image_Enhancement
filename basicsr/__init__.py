@@ -1,4 +1,4 @@
-"""Project-local basicsr package proxying NAFNet_base/basicsr."""
+"""Proxy package to ensure `import basicsr` resolves to NAFNet_base/basicsr."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ if not _REAL_PKG_DIR.exists():
 __file__ = str(_REAL_INIT)
 __path__ = [str(_REAL_PKG_DIR)]
 
-if __spec__ is not None:  # pragma: no cover - defensive for exotic runtimes
+if __spec__ is not None:  # pragma: no cover
     __spec__.origin = __file__
     __spec__.submodule_search_locations = __path__
 
-_code = compile(_REAL_INIT.read_text(encoding="utf-8"), __file__, "exec")
-exec(_code, globals(), globals())
+code = compile(_REAL_INIT.read_text(encoding="utf-8"), __file__, "exec")
+exec(code, globals(), globals())
