@@ -9,15 +9,36 @@ from typing import Dict
 import torch
 import torch.nn.functional as F
 
-from basicsr.archs import build_network
-from basicsr.losses import build_loss
 from basicsr.models.base_model import BaseModel
 from basicsr.utils import get_root_logger
 
 try:  # pragma: no cover - compatibility with legacy registry export
-    from basicsr.utils.registry import MODEL_REGISTRY
+    from basicsr.utils.registry import ARCH_REGISTRY, MODEL_REGISTRY
 except ImportError:  # pragma: no cover
-    from basicsr.utils import MODEL_REGISTRY  # type: ignore
+    from basicsr.utils import ARCH_REGISTRY, MODEL_REGISTRY  # type: ignore
+
+try:  # pragma: no cover - some forks expose build_loss elsewhere
+    from basicsr.losses import build_loss
+except ImportError:  # pragma: no cover
+    from basicsr.models.losses import build_loss  # type: ignore
+
+
+def build_network(opt: Dict) -> torch.nn.Module:
+    """Instantiate a network via ARCH_REGISTRY to avoid direct basicsr.archs dependency."""
+
+    if not isinstance(opt, dict):
+        raise TypeError(f"build_network expects a dict, but received {type(opt)}")
+    net_type = opt.get("type")
+    if net_type is None:
+        raise KeyError("network_g configuration missing required 'type' field.")
+
+    net_cls = ARCH_REGISTRY.get(net_type)
+    if net_cls is None:
+        raise KeyError(
+            f"ARCH_REGISTRY has no entry '{net_type}'. Ensure the corresponding arch module is imported."
+        )
+    kwargs = {k: v for k, v in opt.items() if k != "type"}
+    return net_cls(**kwargs)
 
 
 @MODEL_REGISTRY.register()
@@ -112,7 +133,7 @@ class LowlightModel(BaseModel):
         if self.cri_ssim:
             total_loss = total_loss + self.cri_ssim(self.output, self.gt)
 
-        if isinstance(total_loss, (int, float)) or total_loss == 0:
+        if (not torch.is_tensor(total_loss)) or total_loss.numel() == 0:
             total_loss = F.l1_loss(self.output, self.gt)
 
         total_loss.backward()
