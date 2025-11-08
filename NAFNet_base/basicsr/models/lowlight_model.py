@@ -17,10 +17,17 @@ try:  # pragma: no cover - compatibility with legacy registry export
 except ImportError:  # pragma: no cover
     from basicsr.utils import ARCH_REGISTRY, MODEL_REGISTRY  # type: ignore
 
-try:  # pragma: no cover - some forks expose build_loss elsewhere
-    from basicsr.losses import build_loss
-except ImportError:  # pragma: no cover
-    from basicsr.models.losses import build_loss  # type: ignore
+import importlib
+
+# Try to import build_loss from possible locations at runtime to avoid static resolution errors.
+_build_loss = None
+try:
+    mod = importlib.import_module("basicsr.losses")
+    _build_loss = getattr(mod, "build_loss")
+except (ImportError, ModuleNotFoundError, AttributeError):  # pragma: no cover
+    mod = importlib.import_module("basicsr.models.losses")
+    _build_loss = getattr(mod, "build_loss")
+build_loss = _build_loss
 
 
 def build_network(opt: Dict) -> torch.nn.Module:
@@ -148,7 +155,7 @@ class LowlightModel(BaseModel):
         if self.is_train:
             self.net_g.train()
 
-    def get_current_visuals(self) -> Dict[str, torch.Tensor]:
+    def get_current_visuals(self):
         visuals = OrderedDict()
         if hasattr(self, "lq"):
             visuals["lq"] = self.lq.detach().cpu()
