@@ -23,6 +23,9 @@ _model_modules = [
     for file_name in model_filenames
 ]
 
+# Explicit imports for modules whose names may be referenced directly
+from . import lowlight_model  # noqa: F401
+
 
 def create_model(opt):
     """Create model.
