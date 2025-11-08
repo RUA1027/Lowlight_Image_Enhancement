@@ -12,6 +12,17 @@ from .misc import (check_resume, get_time_str, make_exp_dirs, mkdir_and_rename,
                    scandir, scandir_SIDD, set_random_seed, sizeof_fmt)
 from .create_lmdb import (create_lmdb_for_reds, create_lmdb_for_gopro, create_lmdb_for_rain13k)
 
+try:  # pragma: no cover - registry is optional in some forks
+    from .registry import (
+        ARCH_REGISTRY,
+        MODEL_REGISTRY,
+        LOSS_REGISTRY,
+        METRIC_REGISTRY,
+        DATASET_REGISTRY,
+    )
+except ImportError:  # pragma: no cover
+    ARCH_REGISTRY = MODEL_REGISTRY = LOSS_REGISTRY = METRIC_REGISTRY = DATASET_REGISTRY = None
+
 __all__ = [
     # file_client.py
     'FileClient',
@@ -41,3 +52,12 @@ __all__ = [
     'create_lmdb_for_gopro',
     'create_lmdb_for_rain13k',
 ]
+
+if ARCH_REGISTRY is not None:  # pragma: no cover - only expose if available
+    __all__.extend([
+        'ARCH_REGISTRY',
+        'MODEL_REGISTRY',
+        'LOSS_REGISTRY',
+        'METRIC_REGISTRY',
+        'DATASET_REGISTRY',
+    ])
