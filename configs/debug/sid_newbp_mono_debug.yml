@@ -57,10 +57,10 @@ network_g:
   kernel_spec: P2
   nafnet_params:
     img_channel: 3
-    width: 16
-    enc_blk_nums: [1, 1]
+    width: 32
+    enc_blk_nums: [2, 2]
     middle_blk_num: 1
-    dec_blk_nums: [1, 1]
+    dec_blk_nums: [2, 2]
 
 path:
   pretrain_network_g: ~
@@ -68,7 +68,7 @@ path:
   resume_state: ~
 
 train:
-  total_iter: 20
+  total_iter: 100
   warmup_iter: -1
   enable_amp: false
   optim_g:
@@ -85,17 +85,17 @@ train:
     type: HybridLossPlus
     device: auto
     w_l1_raw: 1.0
-    w_perc: 0.0
-    w_lpips: 0.0
-    w_deltaE: 0.0
-    w_ssim: 0.0
+    w_perc: 0.1
+    w_lpips: 0.1
+    w_deltaE: 0.05
+    w_ssim: 0.1
     w_phys: 0.0
-    use_deltaE: false
-    use_ssim: false
-    use_lpips: false
-    use_phys: false
-    use_uncertainty: false
-  use_grad_clip: false
+    use_deltaE: True
+    use_ssim: True
+    use_lpips: True
+    use_phys: True
+    use_uncertainty: True
+  use_grad_clip: True
 
 val:
   val_freq: 20
