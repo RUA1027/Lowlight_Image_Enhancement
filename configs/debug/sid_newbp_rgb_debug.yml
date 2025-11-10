@@ -11,11 +11,11 @@ datasets:
     name: SID-train-debug
     type: SonySIDLMDBDataset
     phase: train
-    manifest_path: /path/to/manifest_sid.json  # TODO: replace
+    manifest_path: data/debug_sid/manifest_sid_debug.json
     subset: train_small
-    patch_size: 128
+    patch_size: 64
     samples_per_pair: 1
-    random_crop: true
+    random_crop: false
     batch_size_per_gpu: 1
     num_worker_per_gpu: 0
     pin_memory: false
@@ -23,8 +23,8 @@ datasets:
     io_backend:
       type: lmdb
       db_paths:
-        - /path/to/train_short_debug.lmdb  # TODO: replace
-        - /path/to/train_long_debug.lmdb   # TODO: replace
+        - data/debug_sid/train_small_short.lmdb
+        - data/debug_sid/train_small_long.lmdb
       client_keys:
         - short
         - long
@@ -32,8 +32,9 @@ datasets:
     name: SID-val-debug
     type: SonySIDLMDBDataset
     phase: val
-    manifest_path: /path/to/manifest_sid.json  # TODO: replace
+    manifest_path: data/debug_sid/manifest_sid_debug.json
     subset: val_small
+    patch_size: 64
     random_crop: false
     samples_per_pair: 1
     batch_size_per_gpu: 1
@@ -42,8 +43,8 @@ datasets:
     io_backend:
       type: lmdb
       db_paths:
-        - /path/to/val_short_debug.lmdb  # TODO: replace
-        - /path/to/val_long_debug.lmdb   # TODO: replace
+        - data/debug_sid/val_small_short.lmdb
+        - data/debug_sid/val_small_long.lmdb
       client_keys:
         - short
         - long
@@ -55,10 +56,10 @@ network_g:
   kernel_spec: B2
   nafnet_params:
     img_channel: 3
-    width: 16
-    enc_blk_nums: [1, 1]
+    width: 32
+    enc_blk_nums: [2, 2]
     middle_blk_num: 1
-    dec_blk_nums: [1, 1]
+    dec_blk_nums: [2, 2]
 
 path:
   pretrain_network_g: ~
@@ -66,7 +67,7 @@ path:
   resume_state: ~
 
 train:
-  total_iter: 2000
+  total_iter: 200
   warmup_iter: -1
   enable_amp: false
   optim_g:
@@ -83,20 +84,20 @@ train:
     type: HybridLossPlus
     device: auto
     w_l1_raw: 1.0
-    w_perc: 0.0
-    w_lpips: 0.0
-    w_deltaE: 0.0
-    w_ssim: 0.0
+    w_perc: 0.1
+    w_lpips: 0.1
+    w_deltaE: 0.05
+    w_ssim: 0.1
     w_phys: 0.0
-    use_deltaE: false
-    use_ssim: false
-    use_lpips: false
+    use_deltaE: true
+    use_ssim: true
+    use_lpips: true
     use_phys: false
     use_uncertainty: false
   use_grad_clip: false
 
 val:
-  val_freq: 200
+  val_freq: 50
   save_img: false
   use_image: false
   metrics:
@@ -105,8 +106,8 @@ val:
       data_range: 1.0
 
 logger:
-  print_freq: 10
-  save_checkpoint_freq: 200
+  print_freq: 5
+  save_checkpoint_freq: 1000
   use_tb_logger: false
 
 dist_params:
