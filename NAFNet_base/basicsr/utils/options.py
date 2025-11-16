@@ -4,9 +4,11 @@
 # Modified from BasicSR (https://github.com/xinntao/BasicSR)
 # Copyright 2018-2020 BasicSR Authors
 # ------------------------------------------------------------------------
+import os
 import yaml
 from collections import OrderedDict
 from os import path as osp
+from pathlib import Path
 
 
 def ordered_yaml():
@@ -34,6 +36,24 @@ def ordered_yaml():
     return Loader, Dumper
 
 
+def _expand_path(path_value):
+    """Expand environment variables and user markers, normalising separators."""
+
+    if path_value is None:
+        return None
+
+    text = str(path_value).strip()
+    if not text:
+        return text
+
+    expanded = os.path.expandvars(text)
+    # Normalise Windows backslashes to forward slashes before pathlib handling
+    expanded = expanded.replace('\\', '/')
+    path = Path(expanded).expanduser()
+    # Keep relative paths relative while ensuring consistent separators
+    return path.as_posix()
+
+
 def parse(opt_path, is_train=True):
     """Parse option file.
 
@@ -59,15 +79,15 @@ def parse(opt_path, is_train=True):
             if 'scale' in opt:
                 dataset['scale'] = opt['scale']
             if dataset.get('dataroot_gt') is not None:
-                dataset['dataroot_gt'] = osp.expanduser(dataset['dataroot_gt'])
+                dataset['dataroot_gt'] = _expand_path(dataset['dataroot_gt'])
             if dataset.get('dataroot_lq') is not None:
-                dataset['dataroot_lq'] = osp.expanduser(dataset['dataroot_lq'])
+                dataset['dataroot_lq'] = _expand_path(dataset['dataroot_lq'])
 
     # paths
     for key, val in opt['path'].items():
         if (val is not None) and ('resume_state' in key
                                   or 'pretrain_network' in key):
-            opt['path'][key] = osp.expanduser(val)
+            opt['path'][key] = _expand_path(val)
     opt['path']['root'] = osp.abspath(
         osp.join(__file__, osp.pardir, osp.pardir, osp.pardir))
     if is_train:

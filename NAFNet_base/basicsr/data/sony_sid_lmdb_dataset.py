@@ -12,7 +12,7 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -23,6 +23,15 @@ from basicsr.data.transforms import paired_random_crop
 from basicsr.utils import FileClient, img2tensor
 
 MAX_16BIT_VALUE = 65535.0
+
+
+def _expand_to_path(path_value: Union[str, os.PathLike[str]]) -> Path:
+    """Return a pathlib.Path with env vars and user markers expanded."""
+
+    text = os.fspath(path_value)
+    expanded = os.path.expandvars(text)
+    expanded = expanded.replace('\\', '/')
+    return Path(expanded).expanduser()
 
 
 def _load_png_uint16(buffer: bytes) -> np.ndarray:
@@ -61,9 +70,7 @@ class SonySIDLMDBDataset(torch_data.Dataset):
         self.rng = np.random.default_rng(opt.get("seed", None))
 
         # Support environment variables in manifest path
-        manifest_path_str = opt["manifest_path"]
-        manifest_path_str = os.path.expandvars(manifest_path_str)
-        manifest_path = Path(manifest_path_str)
+        manifest_path = _expand_to_path(opt["manifest_path"])
         if not manifest_path.is_file():
             raise FileNotFoundError(f"Manifest file not found: {manifest_path}")
 
@@ -107,23 +114,23 @@ class SonySIDLMDBDataset(torch_data.Dataset):
             client_keys = io_backend_opt.get("client_keys")
             if not db_paths or not client_keys:
                 raise KeyError("LMDB backend requires 'db_paths' and 'client_keys'.")
-            # Expand environment variables in paths
-            db_paths = [os.path.expandvars(str(p)) for p in db_paths]
+            # Expand environment variables / ~ for each path entry
+            db_paths = [_expand_to_path(p) for p in db_paths]
             if any(not path for path in db_paths):
                 raise ValueError(f"Invalid LMDB paths provided: {db_paths}")
             self.file_client = FileClient(
                 backend="lmdb",
-                db_paths=db_paths,
+                db_paths=[str(p) for p in db_paths],
                 client_keys=client_keys,
                 readonly=True,
                 lock=False,
                 readahead=False,
             )
         elif backend_type == "disk":
-            short_path = os.path.expandvars(io_backend_opt["paths"]["short"])
-            long_path = os.path.expandvars(io_backend_opt["paths"]["long"])
-            self.root_short = Path(short_path).expanduser()
-            self.root_long = Path(long_path).expanduser()
+            short_path = _expand_to_path(io_backend_opt["paths"]["short"])
+            long_path = _expand_to_path(io_backend_opt["paths"]["long"])
+            self.root_short = short_path
+            self.root_long = long_path
             if not self.root_short.is_dir() or not self.root_long.is_dir():
                 raise FileNotFoundError(
                     f"Disk backend paths must exist. short={self.root_short}, long={self.root_long}"
