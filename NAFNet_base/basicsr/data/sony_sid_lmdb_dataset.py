@@ -12,7 +12,7 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -59,7 +59,7 @@ def _load_png_uint16(buffer: bytes) -> np.ndarray:
 class SonySIDLMDBDataset(torch_data.Dataset):
     """Sony SID dataset backed by LMDB (or disk) for BasicSR training."""
 
-    def __init__(self, opt: Dict):
+    def __init__(self, opt: dict):
         super().__init__()
 
         self.opt = opt
@@ -81,7 +81,7 @@ class SonySIDLMDBDataset(torch_data.Dataset):
         subset = opt.get("subset", self.phase)
         self.subset = subset
         allowed_ids = set(opt.get("allowed_pair_ids", []))
-        entries: List[Dict] = []
+        entries: list[dict] = []
 
         for record in manifest_data:
             if record.get("subset") != subset:
@@ -193,7 +193,7 @@ class SonySIDLMDBDataset(torch_data.Dataset):
             _crop(long_raw),
         )
 
-    def __getitem__(self, index: int) -> Dict:
+    def __getitem__(self, index: int) -> dict:
         pair_idx = index // self.samples_per_pair
         entry = self.entries[pair_idx]
 
@@ -208,7 +208,7 @@ class SonySIDLMDBDataset(torch_data.Dataset):
         short_raw = short_obs.astype(np.float32) / MAX_16BIT_VALUE
         long_raw = long_gt.astype(np.float32) / MAX_16BIT_VALUE
 
-        aligned_short = np.clip(short_raw * expo_ratio, 0.0, 1.0)
+        aligned_short: np.ndarray = np.clip(short_raw * expo_ratio, 0.0, 1.0)
         short_srgb = aligned_short
         long_srgb = long_raw
 

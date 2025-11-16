@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Iterable, Optional, Union
+from typing import Generator, Optional, Union
 
 _SID_ROOT_CACHE: Optional[Path] = None
 
@@ -18,15 +18,14 @@ def _normalize_path(path_value: Union[str, os.PathLike[str]]) -> Path:
     try:
         return path.resolve()
     except Exception:
-        # Pathlib may fail to resolve non-existent paths on some setups.
         return path
 
 
-def _candidate_roots() -> Iterable[Path]:
+def _candidate_roots() -> Generator[Path, None, None]:
     """Yield potential SID_ROOT locations ordered by confidence."""
 
     env_keys = ("SID_ROOT", "LOWLIGHT_ROOT")
-    raw_candidates = [os.environ.get(key) for key in env_keys]
+    raw_candidates: list[Optional[Union[str, Path]]] = [os.environ.get(key) for key in env_keys]
 
     def _add_path_with_parents(path_obj: Path) -> None:
         raw_candidates.append(path_obj)
@@ -41,11 +40,14 @@ def _candidate_roots() -> Iterable[Path]:
         Path.home() / "Lowlight",
     ])
 
-    seen = set()
+    seen: set[str] = set()
     for candidate in raw_candidates:
         if not candidate:
             continue
-        path = _normalize_path(candidate)
+        if isinstance(candidate, Path):
+            path = candidate
+        else:
+            path = _normalize_path(candidate)
         key = path.as_posix().lower()
         if key in seen:
             continue
@@ -87,7 +89,8 @@ def expand_with_sid_root(path_value: Optional[Union[str, os.PathLike[str]]]) -> 
     if path_value in {None, ""}:
         return None
 
-    expanded = os.path.expandvars(os.fspath(path_value))
+    text = os.fspath(path_value) if isinstance(path_value, os.PathLike) else str(path_value)
+    expanded = os.path.expandvars(text)
     expanded = expanded.replace("\\", "/")
     raw_path = Path(expanded).expanduser()
     if raw_path.is_absolute():
