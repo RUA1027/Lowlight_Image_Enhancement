@@ -8,7 +8,7 @@ datasets:
     name: SID-train
     type: SonySIDLMDBDataset
     phase: train
-    manifest_path: /content/drive/MyDrive/Lowlight/SID_assets/manifest_sid.json
+    manifest_path: ${SID_ROOT}/SID_assets/manifest_sid.json
     subset: train
     patch_size: 384
     samples_per_pair: 4
@@ -20,8 +20,8 @@ datasets:
     io_backend:
       type: lmdb
       db_paths:
-        - /content/drive/MyDrive/Lowlight/SID_lmdb/train_short.lmdb
-        - /content/drive/MyDrive/Lowlight/SID_lmdb/train_long.lmdb
+        - ${SID_ROOT}/SID_lmdb/train_short.lmdb
+        - ${SID_ROOT}/SID_lmdb/train_long.lmdb
       client_keys:
         - short
         - long
@@ -29,7 +29,7 @@ datasets:
     name: SID-val
     type: SonySIDLMDBDataset
     phase: val
-    manifest_path: /content/drive/MyDrive/Lowlight/SID_assets/manifest_sid.json
+    manifest_path: ${SID_ROOT}/SID_assets/manifest_sid.json
     subset: val
     random_crop: false
     samples_per_pair: 1
@@ -39,8 +39,8 @@ datasets:
     io_backend:
       type: lmdb
       db_paths:
-        - /content/drive/MyDrive/Lowlight/SID_lmdb/val_short.lmdb
-        - /content/drive/MyDrive/Lowlight/SID_lmdb/val_long.lmdb
+        - ${SID_ROOT}/SID_lmdb/val_short.lmdb
+        - ${SID_ROOT}/SID_lmdb/val_long.lmdb
       client_keys:
         - short
         - long
