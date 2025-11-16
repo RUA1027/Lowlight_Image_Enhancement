@@ -21,17 +21,18 @@ from torch.utils import data as torch_data
 
 from basicsr.data.transforms import paired_random_crop
 from basicsr.utils import FileClient, img2tensor
+from basicsr.utils.sid_paths import expand_with_sid_root
 
 MAX_16BIT_VALUE = 65535.0
 
 
 def _expand_to_path(path_value: Union[str, os.PathLike[str]]) -> Path:
-    """Return a pathlib.Path with env vars and user markers expanded."""
+    """Return a pathlib.Path with env vars expanded and SID_ROOT awareness."""
 
-    text = os.fspath(path_value)
-    expanded = os.path.expandvars(text)
-    expanded = expanded.replace('\\', '/')
-    return Path(expanded).expanduser()
+    path = expand_with_sid_root(path_value)
+    if path is None:
+        raise ValueError("Received an empty path while resolving dataset inputs.")
+    return path
 
 
 def _load_png_uint16(buffer: bytes) -> np.ndarray:

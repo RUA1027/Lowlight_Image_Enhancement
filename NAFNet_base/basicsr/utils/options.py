@@ -10,6 +10,8 @@ from collections import OrderedDict
 from os import path as osp
 from pathlib import Path
 
+from basicsr.utils.sid_paths import expand_with_sid_root
+
 
 def ordered_yaml():
     """Support OrderedDict for yaml.
@@ -54,6 +56,37 @@ def _expand_path(path_value):
     return path.as_posix()
 
 
+def _normalise_dataset_paths(dataset_opt):
+    manifest_path = dataset_opt.get('manifest_path')
+    if manifest_path:
+        resolved = expand_with_sid_root(manifest_path)
+        if resolved:
+            dataset_opt['manifest_path'] = resolved.as_posix()
+
+    io_backend = dataset_opt.get('io_backend')
+    if isinstance(io_backend, dict):
+        db_paths = io_backend.get('db_paths')
+        if isinstance(db_paths, list):
+            normalised = []
+            for path_value in db_paths:
+                resolved = expand_with_sid_root(path_value)
+                normalised.append(resolved.as_posix() if resolved else path_value)
+            io_backend['db_paths'] = normalised
+        path_dict = io_backend.get('paths')
+        if isinstance(path_dict, dict):
+            for key, value in list(path_dict.items()):
+                resolved = expand_with_sid_root(value)
+                if resolved:
+                    path_dict[key] = resolved.as_posix()
+
+    for legacy_key in ('short_lmdb', 'long_lmdb'):
+        value = dataset_opt.get(legacy_key)
+        if value:
+            resolved = expand_with_sid_root(value)
+            if resolved:
+                dataset_opt[legacy_key] = resolved.as_posix()
+
+
 def parse(opt_path, is_train=True):
     """Parse option file.
 
@@ -82,6 +115,7 @@ def parse(opt_path, is_train=True):
                 dataset['dataroot_gt'] = _expand_path(dataset['dataroot_gt'])
             if dataset.get('dataroot_lq') is not None:
                 dataset['dataroot_lq'] = _expand_path(dataset['dataroot_lq'])
+            _normalise_dataset_paths(dataset)
 
     # paths
     for key, val in opt['path'].items():
